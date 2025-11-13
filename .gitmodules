@@ -1,0 +1,12 @@
+[submodule "services/auth"]
+	path = services/auth
+	url = git@github.com:cogoworldindia/auth-service.git
+[submodule "services/mail"]
+	path = services/mail
+	url = git@github.com:cogoworldindia/mail-service.git
+[submodule "services/user"]
+	path = services/user
+	url = git@github.com:cogoworldindia/user-service.git
+[submodule "services/api-gateway"]
+	path = services/api-gateway
+	url = git@github.com:cogoworldindia/api-gateway.git

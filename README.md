@@ -48,7 +48,7 @@ Your root .env file must contain:
 
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=postgres
-POSTGRES_DB=appdb
+<!-- POSTGRES_DB=appdb -->
 
 
 Each microservice will have its own local .env file inside the service folder for service-specific configs.

@@ -13,8 +13,22 @@ dbcheck:
 		sleep 10; \
 		export POSTGRES_HOST=db; \
 	fi
-	@echo "🧠 Ensuring database exists..."
-	@./scripts/ensure_db.sh || echo "⚠️ Could not create DB automatically."
+# 	@echo "🧠 Ensuring database exists..."
+# 	@./scripts/ensure_db.sh || echo "⚠️ Could not create DB automatically."
+
+# --- SMART REDIS CHECK ---
+.PHONY: redischeck
+redischeck:
+	@echo "🔍 Checking local Redis availability..."
+	@if ./scripts/check_redis.sh; then \
+		echo "🌐 Using local Redis."; \
+		export REDIS_HOST=host.docker.internal; \
+	else \
+		echo "🐳 Starting fallback Docker Redis..."; \
+		$(COMPOSE) --profile fallback up -d redis; \
+		sleep 10; \
+		export REDIS_HOST=redis; \
+	fi
 
 # --- GIT ---
 .PHONY: setup
@@ -37,7 +51,7 @@ build:
 	@echo "✅ Build complete."
 
 .PHONY: up
-up: dbcheck
+up: dbcheck redischeck
 	@echo "🚀 Starting all containers..."
 	$(COMPOSE) up -d
 	@echo "✅ All services running."

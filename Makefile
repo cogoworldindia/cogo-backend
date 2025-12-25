@@ -47,19 +47,19 @@ update:
 .PHONY: build
 build:
 	@echo "🏗️ Building all services..."
-	$(COMPOSE) build
+	$(COMPOSE) docker-compose.yml build
 	@echo "✅ Build complete."
 
 .PHONY: up
 up: dbcheck redischeck
 	@echo "🚀 Starting all containers..."
-	$(COMPOSE) up -d
+	$(COMPOSE) -f docker-compose.yml up -d --build
 	@echo "✅ All services running."
 
 .PHONY: down
 down:
 	@echo "🛑 Stopping containers..."
-	$(COMPOSE) down
+	$(COMPOSE) -f docker-compose.yml down
 	@echo "✅ Containers stopped."
 
 .PHONY: logs
@@ -69,5 +69,5 @@ logs:
 .PHONY: clean
 clean:
 	@echo "🧹 Cleaning up..."
-	$(COMPOSE) down -v --remove-orphans
+	$(COMPOSE) -f docker-compose.yml down -v
 	@echo "✅ Cleanup done."

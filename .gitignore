@@ -1,2 +1,8 @@
 .env
-.env.secrets
+.env.*
+!.env.example
+!.env.secrets.example
+secrets/
+**/__pycache__/
+.venv/
+.DS_Store

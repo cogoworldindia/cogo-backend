@@ -1,122 +1,225 @@
-services:
-  # --- Redis (fallback, only started via 'make up' if local Redis is absent) ---
-  redis:
-    image: redis:7
-    container_name: redis_fallback
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    networks:
-      - backend
-    profiles: ["fallback"]
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+# CoGo local stack. Use the Makefile (`make up`): it passes both env files
+#   docker compose --env-file .env --env-file .env.secrets ...
+# Only the gateway (and dev UIs) are published, all on 127.0.0.1.
+name: cogo
 
-  # --- Fallback Postgres ---
-  db:
-    image: postgres:15
-    container_name: postgres_fallback
-    restart: unless-stopped
+x-service: &service
+  restart: unless-stopped
+  networks: [backend]
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+x-common-env: &common-env
+  ENV: ${ENV:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_JSON: ${LOG_JSON:-true}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+
+x-auth-db-url: &auth-db-url postgresql+asyncpg://${AUTH_DB_USER:-auth_svc}:${AUTH_DB_PASSWORD:?run make secrets}@postgres:5432/${AUTH_DB:-authdb}
+x-user-db-url: &user-db-url postgresql+asyncpg://${USER_DB_USER:-user_svc}:${USER_DB_PASSWORD:?run make secrets}@postgres:5432/${USER_DB:-userdb}
+x-rabbit-url: &rabbit-url amqp://${RABBITMQ_USER:-cogo}:${RABBITMQ_PASSWORD:?run make secrets}@rabbitmq:5672/
+
+services:
+  # ---------------------------------------------------------------- infrastructure
+  postgres:
+    <<: *service
+    image: postgis/postgis:17-3.5  # PostGIS ready for trip/route matching (Phase 3)
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-    networks:
-      - backend
-    ports:
-      - "5432:5432"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run make secrets}
+      AUTH_DB: ${AUTH_DB:-authdb}
+      AUTH_DB_USER: ${AUTH_DB_USER:-auth_svc}
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:?run make secrets}
+      USER_DB: ${USER_DB:-userdb}
+      USER_DB_USER: ${USER_DB_USER:-user_svc}
+      USER_DB_PASSWORD: ${USER_DB_PASSWORD:?run make secrets}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/initdb/20-service-databases.sh:/docker-entrypoint-initdb.d/20-service-databases.sh:ro
+    ports: ["127.0.0.1:5433:5432"]  # 5433: doesn't clash with a host Postgres on 5432
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    profiles: ["fallback"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
-  # --- Microservices (internal only — no host ports exposed) ---
-  auth-service:
-    build: ./services/auth
-    container_name: auth_service
-    env_file:
-      - .env
-      - .env.secrets
-    environment:
-      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${AUTH_DB:-authdb}"
-      DATABASE_URL_SYNC: "postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${AUTH_DB:-authdb}"
-    volumes:
-      - ./services/auth/app/core/credentials:/app/app/core/credentials:ro
-    networks:
-      - backend
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+  redis:
+    <<: *service
+    image: redis:7-alpine
+    # Sessions/OTPs must never be evicted. In production use separate instances for
+    # session data (persistent, noeviction) and cache (allkeys-lru).
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes: [redisdata:/data]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    <<: *service
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-cogo}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?run make secrets}
+    volumes: [rabbitdata:/var/lib/rabbitmq]
+    ports: ["127.0.0.1:15672:15672"]  # management UI
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+
+  mailpit:  # dev SMTP sink: every email lands here, nothing is really sent
+    <<: *service
+    image: axllent/mailpit:v1.27
+    ports: ["127.0.0.1:8025:8025"]
+
+  # ---------------------------------------------------------------- auth
+  auth-migrate:
+    <<: *service
+    restart: "no"
+    image: cogo/auth-service:dev
+    build: &auth-build
+      context: ./services/auth
+      additional_contexts: { common: ./libs/common }
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: *auth-db-url
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  auth-service:
+    <<: *service
+    image: cogo/auth-service:dev
+    build: *auth-build
+    environment:
+      <<: *common-env
+      DATABASE_URL: *auth-db-url
+      REDIS_URL: redis://redis:6379/0
+      RABBITMQ_URL: *rabbit-url
+      JWT_ISSUER: ${JWT_ISSUER:-cogo-auth}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-cogo-api}
+      JWT_PRIVATE_KEY_FILE: /run/secrets/jwt_private_key
+      ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-900}
+      REFRESH_TOKEN_TTL_DAYS: ${REFRESH_TOKEN_TTL_DAYS:-30}
+      OTP_HMAC_KEY: ${OTP_HMAC_KEY:?run make secrets}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+    secrets: [jwt_private_key]
+    depends_on:
+      auth-migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+
+  # ---------------------------------------------------------------- user
+  user-migrate:
+    <<: *service
+    restart: "no"
+    image: cogo/user-service:dev
+    build: &user-build
+      context: ./services/user
+      additional_contexts: { common: ./libs/common }
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: *user-db-url
+    depends_on:
+      postgres: { condition: service_healthy }
 
   user-service:
-    build: ./services/user
-    container_name: user_service
-    env_file:
-      - .env
-      - .env.secrets
+    <<: *service
+    image: cogo/user-service:dev
+    build: *user-build
     environment:
-      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${USER_DB:-userdb}"
-      DATABASE_URL_SYNC: "postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${USER_DB:-userdb}"
-    networks:
-      - backend
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
-  mail-service:
-    build: ./services/mail
-    container_name: mail_service
-    env_file:
-      - .env
-      - .env.secrets
-    networks:
-      - backend
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
-  # --- API Gateway (single public entry point) ---
-  api-gateway:
-    build: ./services/api-gateway
-    container_name: api_gateway
-    env_file:
-      - .env
-      - .env.secrets
+      <<: *common-env
+      DATABASE_URL: *user-db-url
+      RABBITMQ_URL: *rabbit-url
+      AUTH_JWKS_URL: http://auth-service:8000/.well-known/jwks.json
+      JWT_ISSUER: ${JWT_ISSUER:-cogo-auth}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-cogo-api}
     depends_on:
-      auth-service:
-        condition: service_healthy
-      user-service:
-        condition: service_healthy
-      mail-service:
-        condition: service_healthy
-    ports:
-      - "8000:8000"
-    networks:
-      - backend
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      user-migrate: { condition: service_completed_successfully }
+      rabbitmq: { condition: service_healthy }
+      auth-service: { condition: service_healthy }
+
+  # ---------------------------------------------------------------- notification
+  notification-service:
+    <<: *service
+    image: cogo/notification-service:dev
+    build:
+      context: ./services/notification
+      additional_contexts: { common: ./libs/common }
+    environment:
+      <<: *common-env
+      RABBITMQ_URL: *rabbit-url
+      REDIS_URL: redis://redis:6379/1
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-false}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-CoGo <no-reply@cogo.app>}
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  # ---------------------------------------------------------------- edge
+  api-gateway:
+    <<: *service
+    image: cogo/api-gateway:dev
+    build:
+      context: ./services/api-gateway
+      additional_contexts: { common: ./libs/common }
+    environment:
+      <<: *common-env
+      REDIS_URL: redis://redis:6379/2
+      AUTH_SERVICE_URL: http://auth-service:8000
+      USER_SERVICE_URL: http://user-service:8000
+      AUTH_JWKS_URL: http://auth-service:8000/.well-known/jwks.json
+      JWT_ISSUER: ${JWT_ISSUER:-cogo-auth}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-cogo-api}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-[]}
+      FORWARDED_ALLOW_IPS: ${GATEWAY_FORWARDED_ALLOW_IPS:-127.0.0.1}
+      METRICS_PORT: "9100"
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      redis: { condition: service_healthy }
+      auth-service: { condition: service_healthy }
+      user-service: { condition: service_healthy }
+
+  # ---------------------------------------------------------------- observability (opt-in)
+  # make obs-up   (and set OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 in .env for traces)
+  jaeger:
+    <<: *service
+    profiles: [observability]
+    image: jaegertracing/jaeger:2.23.0
+    ports: ["127.0.0.1:16686:16686"]
+
+  prometheus:
+    <<: *service
+    profiles: [observability]
+    image: prom/prometheus:v3.16.0
+    volumes: ["./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["127.0.0.1:9090:9090"]
+
+  grafana:
+    <<: *service
+    profiles: [observability]
+    image: grafana/grafana:13.3.1
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes: ["./infra/grafana/provisioning:/etc/grafana/provisioning:ro"]
+    ports: ["127.0.0.1:3001:3000"]
+
+secrets:
+  jwt_private_key:
+    file: ./secrets/jwt_private_key.pem
 
 networks:
   backend:
 
 volumes:
   pgdata:
+  redisdata:
+  rabbitdata:

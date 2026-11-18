@@ -1,73 +1,60 @@
-COMPOSE=docker compose
+# CoGo backend — local development entry points. `make help` lists targets.
+COMPOSE  := docker compose --env-file .env --env-file .env.secrets
+PY_PROJECTS := libs/common services/auth services/user services/notification services/api-gateway
 
-# --- SMART DB CHECK ---
-.PHONY: dbcheck
-dbcheck:
-	@echo "🔍 Checking local PostgreSQL availability..."
-	@if ./scripts/check_db.sh; then \
-		echo "🌐 Using local PostgreSQL."; \
-		export POSTGRES_HOST=host.docker.internal; \
-	else \
-		echo "🐳 Starting fallback Docker PostgreSQL..."; \
-		$(COMPOSE) --profile fallback up -d db; \
-		sleep 10; \
-		export POSTGRES_HOST=db; \
-	fi
-# 	@echo "🧠 Ensuring database exists..."
-# 	@./scripts/ensure_db.sh || echo "⚠️ Could not create DB automatically."
+.DEFAULT_GOAL := help
+.PHONY: help setup secrets check-docker build up down restart ps logs logs-% migrate obs-up \
+        test lint smoke clean
 
-# --- SMART REDIS CHECK ---
-.PHONY: redischeck
-redischeck:
-	@echo "🔍 Checking local Redis availability..."
-	@if ./scripts/check_redis.sh; then \
-		echo "🌐 Using local Redis."; \
-		export REDIS_HOST=host.docker.internal; \
-	else \
-		echo "🐳 Starting fallback Docker Redis..."; \
-		$(COMPOSE) --profile fallback up -d redis; \
-		sleep 10; \
-		export REDIS_HOST=redis; \
-	fi
+help: ## Show this help
+	@grep -hE '^[a-zA-Z_%-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n",$$1,$$2}'
 
-# --- GIT ---
-.PHONY: setup
-setup:
-	@echo "🧩 Initializing git submodules..."
+setup: ## Init submodules and local secrets (first run)
 	git submodule update --init --recursive
-	@echo "✅ Submodules initialized."
+	@$(MAKE) --no-print-directory secrets
 
-.PHONY: update
-update:
-	@echo "🔄 Updating submodules..."
-	git submodule update --remote --merge
-	@echo "✅ Submodules updated."
+secrets: ## Create .env/.env.secrets/secrets/ if missing (keeps existing values)
+	@./scripts/init-secrets.sh
 
-# --- DOCKER ---
-.PHONY: build
-build:
-	@echo "🏗️ Building all services..."
+check-docker:
+	@docker info >/dev/null 2>&1 || { echo "Cannot reach the Docker daemon (is it running? are you in the docker group?)"; exit 1; }
+
+build: check-docker secrets ## Build all images
 	$(COMPOSE) build
-	@echo "✅ Build complete."
 
-.PHONY: up
-up: dbcheck redischeck
-	@echo "🚀 Starting all containers..."
-	$(COMPOSE) up -d
-	@echo "✅ All services running."
+up: check-docker secrets ## Build and start the stack; waits until healthy
+	$(COMPOSE) up -d --build --wait --wait-timeout 180
+	@printf '\nGateway   http://localhost:8000\nMailpit   http://localhost:8025\nRabbitMQ  http://localhost:15672\n'
 
-.PHONY: down
-down:
-	@echo "🛑 Stopping containers..."
-	$(COMPOSE) down
-	@echo "✅ Containers stopped."
+down: ## Stop the stack (keeps data)
+	$(COMPOSE) --profile observability down
 
-.PHONY: logs
-logs:
+restart: down up ## Restart the stack
+
+ps: ## Show service status
+	$(COMPOSE) ps -a
+
+logs: ## Tail all logs
 	$(COMPOSE) logs -f --tail=50
 
-.PHONY: clean
-clean:
-	@echo "🧹 Cleaning up..."
-	$(COMPOSE) down -v --remove-orphans
-	@echo "✅ Cleanup done."
+logs-%: ## Tail one service, e.g. make logs-auth-service
+	$(COMPOSE) logs -f --tail=100 $*
+
+migrate: ## Run DB migrations (also run automatically by `up`)
+	$(COMPOSE) run --rm auth-migrate
+	$(COMPOSE) run --rm user-migrate
+
+obs-up: ## Start Jaeger (16686), Prometheus (9090), Grafana (3001)
+	$(COMPOSE) --profile observability up -d
+
+test: ## Run every test suite (needs Docker for testcontainers)
+	@set -e; for p in $(PY_PROJECTS); do echo "== $$p"; (cd $$p && uv run --quiet pytest -q -p no:logging); done
+
+lint: ## ruff + mypy for every Python project
+	@set -e; for p in $(PY_PROJECTS); do echo "== $$p"; (cd $$p && uv run --quiet ruff check . && uv run --quiet ruff format --check . && uv run --quiet mypy $$( [ -d src ] && echo src || echo app )); done
+
+smoke: ## End-to-end check against the running stack
+	@python3 scripts/smoke.py
+
+clean: ## Stop and DELETE all local data volumes
+	$(COMPOSE) --profile observability down -v --remove-orphans

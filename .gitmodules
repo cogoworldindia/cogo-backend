@@ -10,3 +10,9 @@
 [submodule "services/api-gateway"]
 	path = services/api-gateway
 	url = git@github.com:cogoworldindia/api-gateway.git
+[submodule "libs/common"]
+	path = libs/common
+	url = git@github.com:cogoworldindia/cogo-common.git
+[submodule "services/notification"]
+	path = services/notification
+	url = git@github.com:cogoworldindia/notification-service.git

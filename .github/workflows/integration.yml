@@ -1,0 +1,35 @@
+name: integration
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # PAT / deploy key with read access to the private service repos.
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+      - name: Generate throwaway secrets
+        run: make secrets
+      - name: Start stack
+        run: make up
+      - name: Smoke test
+        run: make smoke
+      - name: Logs on failure
+        if: failure()
+        run: docker compose --env-file .env --env-file .env.secrets logs --no-color --tail=200
+
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

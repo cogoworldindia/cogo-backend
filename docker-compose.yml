@@ -51,6 +51,7 @@ services:
     # session data (persistent, noeviction) and cache (allkeys-lru).
     command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
     volumes: [redisdata:/data]
+    ports: ["127.0.0.1:6380:6379"]  # for running a service natively (see docs/SETUP.md)
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -64,7 +65,7 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-cogo}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?run make secrets}
     volumes: [rabbitdata:/var/lib/rabbitmq]
-    ports: ["127.0.0.1:15672:15672"]  # management UI
+    ports: ["127.0.0.1:5672:5672", "127.0.0.1:15672:15672"]  # AMQP (native dev) + management UI
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
       interval: 10s

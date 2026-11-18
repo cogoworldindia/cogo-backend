@@ -22,6 +22,15 @@ versions and holds the local stack.
 | `services/notification` | `notification-service` | Queue-driven email worker (no HTTP send API) |
 | `services/mail` | `mail-service` | **Retired** (Java/Gmail). Not started by compose; kept only until its unpushed commit is dealt with |
 
+## Documentation
+
+| Document | For |
+|---|---|
+| [docs/SETUP.md](docs/SETUP.md) | Setup, native hot reload, migrations, tests, the multi-repo workflow, adding a service, troubleshooting, production checklist |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, flows (sequence diagrams), data ownership, messaging, security, scalability, Phase 3 |
+| [docs/architecture.svg](docs/architecture.svg) ([png](docs/architecture.png)) | Architecture diagram |
+| [docs/api/CoGo-API-Reference.xlsx](docs/api/CoGo-API-Reference.xlsx) | API reference per service: routes, endpoints, schemas, events, error codes |
+
 ## Quick start
 
 Prerequisites: Docker (with Compose v2.24+), `make`, `openssl`, and [uv](https://docs.astral.sh/uv/)

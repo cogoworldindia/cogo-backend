@@ -1,8 +1,5 @@
-version: "3.9"
-
 services:
-  # --- Redis ---
-   # --- Redis (optional fallback) ---
+  # --- Redis (fallback, only started via 'make up' if local Redis is absent) ---
   redis:
     image: redis:7
     container_name: redis_fallback
@@ -12,85 +9,111 @@ services:
     networks:
       - backend
     profiles: ["fallback"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # --- Fallback Postgres ---
   db:
     image: postgres:15
     container_name: postgres_fallback
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      # POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    networks:
+      - backend
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-    networks:
-      - backend
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
-    # This container will be started dynamically only if needed
     profiles: ["fallback"]
 
-  # --- Microservices ---
+  # --- Microservices (internal only — no host ports exposed) ---
   auth-service:
     build: ./services/auth
     container_name: auth_service
     env_file:
       - .env
-    # depends_on:
-    #   - redis
-    ports:
-      - "8001:8000"
+      - .env.secrets
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${AUTH_DB:-authdb}"
+      DATABASE_URL_SYNC: "postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${AUTH_DB:-authdb}"
+    volumes:
+      - ./services/auth/app/core/credentials:/app/app/core/credentials:ro
     networks:
       - backend
     extra_hosts:
-    - "host.docker.internal:host-gateway"
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   user-service:
     build: ./services/user
     container_name: user_service
     env_file:
       - .env
-    # depends_on:
-    #   - redis
-    ports:
-      - "8002:8000"
+      - .env.secrets
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${USER_DB:-userdb}"
+      DATABASE_URL_SYNC: "postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${USER_DB:-userdb}"
     networks:
       - backend
     extra_hosts:
-    - "host.docker.internal:host-gateway"
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   mail-service:
     build: ./services/mail
     container_name: mail_service
     env_file:
       - .env
-    # depends_on:
-    #   - redis
-    ports:
-      - "8080:8081"
+      - .env.secrets
     networks:
       - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
+  # --- API Gateway (single public entry point) ---
   api-gateway:
     build: ./services/api-gateway
     container_name: api_gateway
     env_file:
       - .env
+      - .env.secrets
     depends_on:
-      - auth-service
-      - user-service
-      - mail-service
+      auth-service:
+        condition: service_healthy
+      user-service:
+        condition: service_healthy
+      mail-service:
+        condition: service_healthy
     ports:
       - "8000:8000"
     networks:
       - backend
     extra_hosts:
-    - "host.docker.internal:host-gateway"
+      - "host.docker.internal:host-gateway"
 
 networks:
   backend:

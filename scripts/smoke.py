@@ -9,6 +9,8 @@ import base64
 import json
 import os
 import re
+import socket
+import struct
 import sys
 import time
 import urllib.error
@@ -58,6 +60,89 @@ def call(method: str, url: str, body: Any = None, token: str | None = None,
         except ValueError:
             payload = raw.decode(errors="replace")
         return e.code, {k.lower(): v for k, v in e.headers.items()}, payload
+
+
+class WebSocket:
+    """Minimal RFC 6455 client (text frames, ping/pong, close) so the smoke test stays stdlib."""
+
+    class Closed(Exception):
+        def __init__(self, code: int) -> None:
+            super().__init__(code)
+            self.code = code
+
+    def __init__(self, url: str, timeout: float = 10.0) -> None:
+        parts = urllib.parse.urlsplit(url)
+        self.sock = socket.create_connection((parts.hostname, parts.port or 80), timeout=timeout)
+        key = base64.b64encode(os.urandom(16)).decode()
+        path = parts.path + (f"?{parts.query}" if parts.query else "")
+        self.sock.sendall(
+            (f"GET {path} HTTP/1.1\r\nHost: {parts.netloc}\r\nUpgrade: websocket\r\n"
+             f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode()
+        )
+        head = b""
+        while b"\r\n\r\n" not in head:
+            chunk = self.sock.recv(4096)
+            if not chunk:
+                raise ConnectionError("handshake closed")
+            head += chunk
+        status, _, self._buf = head.partition(b"\r\n\r\n")
+        if b" 101 " not in status.split(b"\r\n")[0]:
+            raise ConnectionError(status.split(b"\r\n")[0].decode())
+
+    def _read(self, n: int) -> bytes:
+        while len(self._buf) < n:
+            chunk = self.sock.recv(65536)
+            if not chunk:
+                raise WebSocket.Closed(1006)
+            self._buf += chunk
+        out, self._buf = self._buf[:n], self._buf[n:]
+        return out
+
+    def _frame(self, opcode: int, payload: bytes) -> None:
+        mask = os.urandom(4)
+        n = len(payload)
+        header = bytes([0x80 | opcode]) + (
+            bytes([0x80 | n]) if n < 126 else bytes([0x80 | 126]) + struct.pack(">H", n)
+            if n < 65536 else bytes([0x80 | 127]) + struct.pack(">Q", n)
+        )
+        self.sock.sendall(header + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+
+    def send(self, type_: str, data: dict[str, Any] | None = None, id_: str | None = None) -> None:
+        frame: dict[str, Any] = {"type": type_, "data": data or {}}
+        if id_:
+            frame["id"] = id_
+        self._frame(0x1, json.dumps(frame).encode())
+
+    def recv(self, type_: str, timeout: float = 8.0, where: Any = None) -> dict[str, Any]:
+        """The next frame of this type (others are skipped)."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            self.sock.settimeout(max(0.1, deadline - time.time()))
+            try:
+                b1, b2 = self._read(2)
+            except TimeoutError:
+                break
+            n = b2 & 0x7F
+            if n == 126:
+                n = struct.unpack(">H", self._read(2))[0]
+            elif n == 127:
+                n = struct.unpack(">Q", self._read(8))[0]
+            payload, opcode = self._read(n), b1 & 0x0F
+            if opcode == 0x8:
+                raise WebSocket.Closed(struct.unpack(">H", payload[:2])[0] if len(payload) >= 2 else 1005)
+            if opcode == 0x9:
+                self._frame(0xA, payload)
+            elif opcode == 0x1:
+                frame = json.loads(payload)
+                if frame.get("type") == type_ and (where is None or where(frame.get("data") or {})):
+                    return dict(frame)
+        raise TimeoutError(f"no {type_} frame within {timeout}s")
+
+    def close(self) -> None:
+        try:
+            self._frame(0x8, struct.pack(">H", 1000))
+        finally:
+            self.sock.close()
 
 
 def check(name: str, ok: bool, detail: Any = "") -> None:
@@ -322,6 +407,77 @@ def main() -> int:
     check("bob deletes his trip: it leaves alice's matches and banner", purged, a_banner())
     call("DELETE", f"{GATEWAY}/v1/journeys/{a_trip}", token=a["access_token"])
 
+    print("chat + notifications (M5)")
+    ws_base = GATEWAY.replace("http", "ws", 1) + "/v1/ws?token="
+    status, _, body = call("POST", f"{GATEWAY}/v1/me/devices", {"token": f"smoke-{run}-alice-device", "platform": "android"},
+                           token=a["access_token"])
+    check("alice registers a push device (notification-service)", status == 200, body)
+    status, _, body = call("POST", f"{GATEWAY}/v1/journeys", {**trip, "group_size": 4}, token=a["access_token"])
+    host_trip = ((body or {}).get("data") or {}).get("id")
+    alice_ws = WebSocket(ws_base + a["access_token"])
+    alice_ws.send("ping", id_="p1")
+    check("alice's socket is up (gateway -> chat-ws)", alice_ws.recv("pong")["id"] == "p1")
+
+    status, _, body = call("POST", f"{GATEWAY}/v1/connection-requests",
+                           {"target_journey_id": host_trip, "message": "Count me in! Call me on 98765 43210"},
+                           token=b["access_token"])
+    sent = (body or {}).get("data") or {}
+    check("bob asks to join; contact details are masked",
+          status == 201 and sent.get("message") == "Count me in! Call me on •••" and sent.get("journey_match") is None, body)
+    try:
+        live = alice_ws.recv("request.new")["data"]
+        live_ok = live["id"] == sent.get("id") and live["user"]["id"] == b["user_id"]
+    except Exception as exc:
+        live_ok, live = False, exc
+    check("alice sees the request live on her socket", live_ok, live)
+
+    def alice_pushes(fragment: str) -> bool:
+        for _ in range(40):
+            _, _, pb = call("GET", f"{GATEWAY}/v1/me/devices/test-pushes", token=a["access_token"])
+            if any(fragment in p["body"] for p in ((pb or {}).get("data") or [])):
+                return True
+            time.sleep(0.25)
+        return False
+
+    check("...and as a push (mock FCM)", alice_pushes("wants to join your trip Pune → Panaji"))
+    status, _, body = call("POST", f"{GATEWAY}/v1/connection-requests/{sent.get('id')}/accept", token=a["access_token"])
+    conversation = ((body or {}).get("data") or {}).get("conversation_id")
+    check("alice accepts: they're connected, with a conversation", status == 200 and bool(conversation), body)
+    seats = False
+    for _ in range(40):  # chat.request_accepted -> journey-service takes a seat
+        _, _, jb = call("GET", f"{GATEWAY}/v1/journeys/{host_trip}", token=a["access_token"])
+        if ((jb or {}).get("data") or {}).get("seats_left") == 2:
+            seats = True
+            break
+        time.sleep(0.25)
+    check("the accepted request takes a seat on alice's trip", seats)
+    _, _, pb = call("GET", f"{GATEWAY}/v1/users/{b['user_id']}", token=a["access_token"])
+    check("bob's profile shows connection_status=connected for alice",
+          ((pb or {}).get("data") or {}).get("connection_status") == "connected", pb)
+
+    bob_ws = WebSocket(ws_base + b["access_token"])
+    alice_ws.send("message.send", {"conversation_id": conversation, "client_msg_id": f"{run}-1", "body": "Welcome aboard!"}, "m1")
+    ack = alice_ws.recv("ack", where=None)
+    got = bob_ws.recv("message.new", where=lambda d: d.get("body") == "Welcome aboard!")
+    check("alice -> bob in real time", ack["data"].get("message_id") == got["data"]["id"])
+    bob_ws.send("message.send", {"conversation_id": conversation, "client_msg_id": f"{run}-2", "body": "Thanks! See you there"}, "m2")
+    bob_ws.recv("ack")
+    back = alice_ws.recv("message.new", where=lambda d: d.get("body") == "Thanks! See you there")
+    check("bob -> alice in real time", back["data"]["sender_id"] == b["user_id"])
+    alice_ws.close()
+    time.sleep(0.5)  # alice's presence clears when her socket closes
+    bob_ws.send("message.send", {"conversation_id": conversation, "client_msg_id": f"{run}-3", "body": "Shall we leave at 6?"}, "m3")
+    bob_ws.recv("ack")
+    check("with alice's socket closed, bob's message reaches her as a push", alice_pushes("Shall we leave at 6?"))
+    _, _, pb = call("GET", f"{GATEWAY}/v1/me/devices/test-pushes", token=a["access_token"])
+    check("...but not the one she already saw live (presence at send time)",
+          not any("See you there" in p["body"] for p in ((pb or {}).get("data") or [])), pb)
+    status, _, body = call("GET", f"{GATEWAY}/v1/conversations/badge", token=a["access_token"])
+    check("alice's chat badge counts the unread message",
+          status == 200 and body["data"]["unread_total"] >= 1, body)
+    bob_ws.close()
+    call("DELETE", f"{GATEWAY}/v1/journeys/{host_trip}", token=a["access_token"])
+
     print("OTP brute force")
     call("POST", f"{GATEWAY}/v1/auth/email/send", {"email": carol})
     real = otp_for(carol)
@@ -344,7 +500,8 @@ def main() -> int:
 
     print("events")
     time.sleep(1)
-    for q in ("user-service.dlq", "social-service.dlq", "journey-service.dlq", "notification.email.dlq"):
+    for q in ("user-service.dlq", "social-service.dlq", "journey-service.dlq", "chat-service.dlq",
+              "notification-service.dlq", "notification.email.dlq"):
         depth = queue_depth(q)
         check(f"{q} is empty", depth == 0, depth)
 

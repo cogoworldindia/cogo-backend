@@ -22,3 +22,7 @@
 [submodule "services/social"]
 	path = services/social
 	url = git@github.com:cogoworldindia/social-service.git
+[submodule "services/chat"]
+	path = services/chat
+	url = git@github.com:cogoworldindia/chat-service.git
+	branch = feature/phase1

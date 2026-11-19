@@ -55,7 +55,7 @@ lint: ## ruff + mypy for every Python project
 
 contracts: ## Regenerate contracts/ (event JSON Schemas + OpenAPI); CI fails if they drift
 	@cd libs/common && uv run --quiet python ../../scripts/export_event_schemas.py ../../contracts/events
-	@set -e; for s in auth user journey social; do (cd services/$$s && PYTHONPATH=. uv run --quiet python ../../scripts/export_openapi.py ../../contracts/openapi/$$s-service.json); done
+	@set -e; for s in auth user journey social chat notification; do (cd services/$$s && PYTHONPATH=. uv run --quiet python ../../scripts/export_openapi.py ../../contracts/openapi/$$s-service.json); done
 
 smoke: ## End-to-end check against the running stack
 	@python3 scripts/smoke.py

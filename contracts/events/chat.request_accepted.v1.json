@@ -1,0 +1,102 @@
+{
+  "$defs": {
+    "UserRef": {
+      "description": "Display data carried in fat events so consumers never call back.",
+      "properties": {
+        "avatar_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Avatar Url"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Username"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "UserRef",
+      "type": "object"
+    }
+  },
+  "description": "chat-service -> chat.request_accepted: journey-service takes a seat, the sender is\ntold (spec \u00a75.7).",
+  "properties": {
+    "conversation_id": {
+      "format": "uuid",
+      "title": "Conversation Id",
+      "type": "string"
+    },
+    "receiver": {
+      "$ref": "#/$defs/UserRef"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "route_text": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Route Text"
+    },
+    "sender_id": {
+      "format": "uuid",
+      "title": "Sender Id",
+      "type": "string"
+    },
+    "target_journey_id": {
+      "format": "uuid",
+      "title": "Target Journey Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "sender_id",
+    "receiver",
+    "target_journey_id",
+    "conversation_id"
+  ],
+  "title": "ChatRequestAccepted",
+  "type": "object"
+}

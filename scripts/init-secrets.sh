@@ -26,7 +26,7 @@ if grep -q '^JWT_SECRET_KEY=' .env.secrets; then
 fi
 
 for key in POSTGRES_PASSWORD AUTH_DB_PASSWORD USER_DB_PASSWORD JOURNEY_DB_PASSWORD SOCIAL_DB_PASSWORD \
-           RABBITMQ_PASSWORD OTP_HMAC_KEY CURSOR_SECRET MEDIA_ACCESS_KEY MEDIA_SECRET_KEY; do
+           CHAT_DB_PASSWORD NOTIFICATION_DB_PASSWORD RABBITMQ_PASSWORD OTP_HMAC_KEY CURSOR_SECRET MEDIA_ACCESS_KEY MEDIA_SECRET_KEY; do
   current="$(grep -E "^${key}=" .env.secrets | tail -1 | cut -d= -f2- || true)"
   if [[ -z "$current" || "$current" == "CHANGE_ME" ]]; then
     set_secret "$key" "$(openssl rand -hex 24)"
@@ -45,7 +45,7 @@ chmod 644 secrets/jwt_private_key.pem
 # Per-service Ed25519 keys for service-to-service tokens (spec §1A.4). Each service gets
 # only its own private key; every service sees the public keys of all of them.
 mkdir -p secrets/service-keys/public
-for svc in auth-service user-service journey-service social-service chat-service notification-service admin-service; do
+for svc in auth-service user-service journey-service social-service chat-service chat-ws notification-service admin-service; do
   if [[ ! -f "secrets/service-keys/${svc}.pem" ]]; then
     openssl genpkey -algorithm ed25519 -out "secrets/service-keys/${svc}.pem"
     echo "generated service key for ${svc}"

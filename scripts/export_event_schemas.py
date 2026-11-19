@@ -28,6 +28,12 @@ EVENTS = {
     K.SOCIAL_USER_UNBLOCKED: c.UserBlocked,
     K.SAFETY_CONTENT_HIDDEN: c.ContentModeration,
     K.SAFETY_CONTENT_UNHIDDEN: c.ContentModeration,
+    K.CHAT_REQUEST_SENT: c.ChatRequestSent,
+    K.CHAT_REQUEST_ACCEPTED: c.ChatRequestAccepted,
+    K.CHAT_REQUEST_REJECTED: c.ChatRequestClosed,
+    K.CHAT_REQUEST_WITHDRAWN: c.ChatRequestClosed,
+    K.CHAT_REQUEST_EXPIRED: c.ChatRequestClosed,
+    K.CHAT_MESSAGE_CREATED: c.ChatMessageCreated,
 }
 
 out = Path(sys.argv[1])

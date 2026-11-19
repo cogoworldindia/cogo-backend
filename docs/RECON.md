@@ -51,6 +51,15 @@ rule: **match what exists** unless the spec's version is needed for a feature.
 | D24 | `journey_matches` rows for valid pairs | — | Rows are **directional**: (A, B) exists only if A's host may see B now (B not moderation-hidden, not full, not hidden by A's host). The banner count then equals what the Matches list shows. The list still re-applies these filters at read time, so a row the worker hasn't caught up with yet can't leak. |
 | D25 | Emit `journey.match_found` "for each B whose owner should be told"; 3 per journey per day | — | A new row (X, Y) notifies X's host only when Y is the newcomer: Y was just posted or re-routed (`pending`) and X wasn't, or both were and X is older. The result doesn't depend on which refresh runs first, and unblocks or eligibility changes notify nobody. The daily cap is enforced by the producer (Redis counter per journey per IST day), so the bus doesn't carry pushes that would be dropped. It fails open if Redis is down. |
 | D26 | "Scoring is pure Python over at most a few hundred rows" | — | New config `matching.max_candidates` (default 1000) caps the rows scored per journey, nearest first. New `matching.page_size` (20) for the Matches list. Measured at 100k journeys: [perf/matching.md](perf/matching.md). |
+| D27 | Gateway does WebSocket upgrade passthrough for `/v1/ws` | Custom gateway (D6) | The gateway proxies `/v1/ws` to chat-ws: it rejects a bad token in the URL at the edge, limits connects (30/min per user, per IP before auth), relays frames and passes close codes through. In production an L7 load balancer can route `/v1/ws` straight to chat-ws. chat-ws verifies the token again and owns the 120 s idle timeout. |
+| D28 | Push `chat.message_created` only if the recipient has no presence key | — | Presence is also **snapshotted at send time** (`recipient_online` in the event). The worker sees the event only after the outbox relay, so someone who read a message on the socket and closed the app would otherwise get a push for it (found by the smoke test). Suppressed if online then *or* now. |
+| D29 | FCM through the Firebase Admin SDK | — | FCM **HTTP v1 called directly**: the OAuth token is minted from the service-account key with PyJWT. It's the same API the SDK wraps, and stays async (no thread pool, no extra dependency). |
+| D30 | chat-ws calls chat-api with a service token | Service identity per service (D7) | chat-ws has its **own key** (`iss=chat-ws`). chat-api's `/internal/messages`, `/internal/receipts` and `/internal/conversations/{id}/members` accept only it. `make secrets` generates it. |
+| D31 | Unread = messages after `last_read_message_id` | — | Kept as `conversation_members.unread_count`: +1 in the send transaction, recounted on read after locking the member row, 0 on clear. The badge is one indexed SUM. A test races sends against reads, and fails without the lock. |
+| D32 | A block "deletes ... any pending requests in the pair" | — | They're marked `expired` (with `chat.request_expired`) instead of deleted, which keeps the history for admins. The rest is as specified: the connection is deleted and the chat becomes read-only (`403 blocked`). An unblock doesn't reconnect anyone. |
+| D33 | `/internal/messages` falls back to social `/internal/blocks/check` while the projection catches up | — | Not implemented: chat-service's block projection is authoritative (lag < 2 s). A send in that window still fails as soon as the event lands, because the connection is deleted. Revisit if product wants the stricter rule. |
+| D34 | "Batches likes in a 10-minute window" | — | The first like on a trip pushes at once. Later likes in the window become one "X and N others also liked your trip" when it closes (a background flusher; one replica claims each window via `ZREM`). Config `notifications.like_window_minutes`. |
+| D35 | Realtime state in Redis | One dev Redis, logical DBs | Pub/sub, presence and message rate limits use a **realtime** Redis (db 6 in dev), shared by chat-api, chat-ws and the notification worker. In production use a separate instance. Pub/sub channels aren't per-DB, so only presence needs the shared DB. |
 
 ## 3. Open questions (spec §14): defaults implemented
 
@@ -92,9 +101,9 @@ Follows spec §13, in order. Each milestone ends with migrations, OpenAPI and ev
 | M0 | `cogo-common`: service tokens, internal client + breaker, app config, cursors, scoring, rate limits, idempotent consumer, versioned projections, per-service queues + dispatcher, broker start with retries. `contracts/` + generators (`make contracts`). Service keys in `make secrets`. **Done.** |
 | M1 | user-service single-table migration, `/v1/me`, personality tags, covers, media upload (RustFS in dev), `user.*` events. social-service follows → counters. Places proxy (journey-service, mock + Google providers). **Done.** |
 | M2 | journey-service: journeys CRUD, `journey.*` events, projections, `/me/journeys`, scheduler. user-service `journeys_count`. **Done.** |
-| M3 | Feed (ranked, filtered, stable cursors) + likes/comments/shares/hides + `/j/{id}` preview and app links; social blocks, reports, auto-hide; block and moderation consumers in journey- and user-service. **Done.** Deferred: cover/avatar moderation targets in user-service (M7, with image moderation); `connection_status` in DTOs (needs chat-service, M5). |
+| M3 | Feed (ranked, filtered, stable cursors) + likes/comments/shares/hides + `/j/{id}` preview and app links; social blocks, reports, auto-hide; block and moderation consumers in journey- and user-service. **Done.** Deferred: cover/avatar moderation targets in user-service (M7, with image moderation). (`connection_status` in DTOs landed in M5.) |
 | M4 | Matching worker in journey-service: `journey_matches` (directional), candidate retrieval on both GiST indexes, Python scoring, ordered row locks, banners, `journey.match_found` with a daily cap, a scheduler sweep, `GET /v1/journeys/{id}/matches` with filters and keyset paging, and a load check (`docs/perf/matching.md`). **Done.** Deferred: `GET /internal/journeys/{id}/join-check` (M5, its first caller is chat-service); `seats_taken` from `chat.request_accepted` (M5); the Matches screen itself (mobile, see §4). |
-| M5 | chat-service + chat-ws; notification-service device tokens, prefs, FCM (mock) |
+| M5 | **chat-service** (new repo): requests with join-check, snapshots and masking; connections; conversations, messages, receipts, mute, clear, badge; internal relations and socket endpoints; consumers (projections, blocks, journey lifecycle, moderation). **chat-ws**: the §6.3 protocol, Redis pub/sub fan-out, presence, idle timeout, graceful close. **notification-service**: database, device tokens, preferences, push worker (prefs, presence, mute, dedupe, like batching), mock + FCM HTTP v1 providers. journey-service: `/internal/journeys/{id}/join-check`, seats from `chat.request_accepted`, `connection_status` on cards (and in user-service profiles). Gateway: chat and notification routes, `/v1/ws` passthrough. Spec §12 E2E flows 1–2 pass in `make smoke`. **Done.** Deferred: the mobile screens (§4); `/internal/journeys/{id}/summary` (its first caller is admin, M7); the block-check fallback (D33); App Check (M8). |
 | M6 | eKYC |
 | M7 | admin-service, moderation, account deletion |
 | M8 | Hardening, load tests, Helm |
@@ -120,3 +129,18 @@ Follows spec §13, in order. Each milestone ends with migrations, OpenAPI and ev
     fails loudly. Events published ahead of their consumer go out without `mandatory`.
   - The four stuck dev rows were reset and flushed.
   - A regression test covers it.
+
+- **A push for a message already read on the socket (found in M5 by the smoke test).** The worker
+  checked presence when it processed `chat.message_created`, which is after the outbox relay.
+  A user who read the message live and closed the app got a push for it anyway.
+  - Fix: chat-api snapshots presence at send time (D28), and the worker suppresses the push if
+    the user was online then or is now.
+  - The smoke test and unit tests both cover it.
+- **A hide could fail with a 500 under matching load (seen once in tests).** Hide and unhide
+  recomputed the viewer's matches inside the request transaction, so lock contention with the
+  matching worker could fail the user's request.
+  - Fix: the recompute runs in its own transaction after the hide commits, with retries.
+  - The Matches list filters hides at read time, so only the banner count can lag.
+- **A feed test failed between 18:30 and 24:00 UTC.** It built its date filter from the UTC date,
+  while filters are interpreted in IST (spec §11). The test now uses the IST date; the service
+  was already right.

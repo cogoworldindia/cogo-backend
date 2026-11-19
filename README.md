@@ -21,7 +21,8 @@ versions and holds the local stack.
 | `services/user` | `user-service` | Profiles, tags, covers, media uploads; emits `user.*`; consumes `user.registered`, `social.*followed` |
 | `services/journey` | `journey-service` | Journeys, home feed, engagement, share pages, Places proxy, matching worker + Matches list |
 | `services/social` | `social-service` | Follows, blocks, reports, auto-hide moderation |
-| `services/notification` | `notification-service` | Queue-driven email worker (no HTTP send API) |
+| `services/chat` | `chat-service` | Connection requests, connections, conversations, messages (`chat-api`), and the WebSocket server (`chat-ws`) |
+| `services/notification` | `notification-service` | Email (OTP) and push notifications: device tokens, preferences, FCM (no HTTP send API) |
 | `services/mail` | `mail-service` | **Retired** (Java/Gmail). Not started by compose; kept only until its unpushed commit is dealt with |
 
 ## Documentation
@@ -126,7 +127,7 @@ through a named Docker build context in compose (`additional_contexts: common`).
 
 ## Roadmap
 
-Phase 1 follows the build spec's milestones (M0–M8). M0–M4 are done: platform foundations,
-profiles and follows, journeys, feed and safety, and matching. Next are chat and push
-notifications (M5), eKYC (M6), admin and moderation (M7) and hardening (M8). The plan and its
+Phase 1 follows the build spec's milestones (M0–M8). M0–M5 are done: platform foundations,
+profiles and follows, journeys, feed and safety, matching, and chat with push notifications.
+Next are eKYC (M6), admin and moderation (M7) and hardening (M8). The plan and its
 status are in [docs/RECON.md](docs/RECON.md) §5.

@@ -1,0 +1,43 @@
+{
+  "description": "chat.request_rejected / withdrawn / expired (analytics only in P1; the sender is\nnever notified of a rejection).",
+  "properties": {
+    "receiver_id": {
+      "format": "uuid",
+      "title": "Receiver Id",
+      "type": "string"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "sender_id": {
+      "format": "uuid",
+      "title": "Sender Id",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "rejected",
+        "withdrawn",
+        "expired"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "target_journey_id": {
+      "format": "uuid",
+      "title": "Target Journey Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "sender_id",
+    "receiver_id",
+    "target_journey_id",
+    "status"
+  ],
+  "title": "ChatRequestClosed",
+  "type": "object"
+}

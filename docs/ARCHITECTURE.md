@@ -1,7 +1,7 @@
 # CoGo backend architecture
 
 CoGo connects people whose travel paths overlap. This document describes how the backend is
-built today (Phase 1 through milestone M4; progress and every difference from the build spec are
+built today (Phase 1 through milestone M5; progress and every difference from the build spec are
 in [RECON.md](RECON.md)). For running it locally, see [SETUP.md](SETUP.md). For endpoint-level
 detail, see the generated contracts in `contracts/openapi/` and `contracts/events/` (the
 [API workbook](api/CoGo-API-Reference.xlsx) covers the auth and user core).
@@ -9,18 +9,21 @@ detail, see the generated contracts in `contracts/openapi/` and `contracts/event
 ![CoGo backend architecture](architecture.svg)
 
 The diagram shows the platform core (gateway, auth, user, notification, messaging). The
-journey and social services in the table below plug into the same gateway, bus and patterns.
+journey, social and chat services in the table below plug into the same gateway, bus and
+patterns.
 
 ## Components
 
 | Component | Responsibility | Owns | Talks to |
 |---|---|---|---|
-| **api-gateway** | The only public entry point. It routes an explicit allowlist, checks JWTs at the edge, applies rate limits and streams requests to upstreams. | Redis db2 (rate-limit counters) | auth, user, journey and social services (HTTP); auth JWKS |
+| **api-gateway** | The only public entry point. It routes an explicit allowlist, checks JWTs at the edge, applies rate limits, streams requests to upstreams and passes `/v1/ws` WebSockets through to chat-ws. | Redis db2 (rate-limit counters) | every service's public API (HTTP), chat-ws (WebSocket); auth JWKS |
 | **auth-service** | Identity: email OTP and Google sign-in, account linking, access tokens, refresh sessions | Postgres `authdb` (accounts, identities, session_audit, outbox); Redis db0 (OTP, sessions) | RabbitMQ (publishes) |
 | **user-service** | User records and profiles, personality tags, cover photos, media uploads, follower and journey counters | Postgres `userdb` (users, personality_tags, user_cover_photos, media_uploads, block_projection, outbox, processed_events) | RabbitMQ (publishes `user.*`; consumes registrations, follows, journey counts, blocks); object storage (presigned uploads); auth JWKS |
 | **journey-service** | Journeys and their lifecycle scheduler, home feed, likes/comments/shares/hides, share pages, Places proxy, and the **matching worker** | Postgres `journeydb` with PostGIS (journeys, journey_matches, engagement tables, user and block projections, outbox, processed_events); Redis db4 (Places cache, scheduler locks, match-push caps) | RabbitMQ (publishes `journey.*`; consumes its own `journey.*`, `user.*`, blocks, moderation); social-service (follow status, internal HTTP); Google Places in production |
 | **social-service** | Follows, blocks, reports and auto-hide moderation | Postgres `socialdb` (follows, blocks, reports, moderation_state, user_projection, outbox, processed_events); Redis db5 | RabbitMQ (publishes `social.*`, `safety.*`; consumes `user.*`) |
-| **notification-service** | Delivers notifications. Email today, push later | Redis db1 (idempotency keys) | RabbitMQ (consumes); SMTP relay |
+| **chat-service** (`chat-api`) | Connection requests, connections, conversations, messages, receipts, mute, badges | Postgres `chatdb` (connection_requests, connections, conversations, conversation_members, messages, user and block projections, outbox, processed_events); realtime Redis (pub/sub, message rate limits) | RabbitMQ (publishes `chat.*`; consumes `user.*`, blocks, journey lifecycle, moderation); journey-service join-check (internal HTTP) |
+| **chat-ws** | WebSockets only: the §6.3 protocol, presence, fan-out. Stateless, from the chat-service image | realtime Redis (presence, `user:{id}` channels) | chat-api internal API; auth JWKS |
+| **notification-service** | Email (OTP codes) and push: device tokens, preferences, the push worker | Postgres `notificationdb` (device_tokens, notification_prefs, notification_log, user_projection, processed_events); Redis db1 (idempotency, like batches) | RabbitMQ (consumes); SMTP relay; FCM; realtime Redis (reads presence) |
 | **cogo-common** | Shared infrastructure library used by every service. It holds no domain logic. | — | — |
 | **RabbitMQ** | Event and command bus: exchange `cogo.events` (topic) and DLX `cogo.dlx` | one quorum queue + DLQ per consuming service | — |
 | **Object storage** | Avatars and cover photos (S3 API; RustFS in dev) | media bucket | Clients upload with presigned PUTs |
@@ -124,6 +127,8 @@ sequenceDiagram
 | user-service | `users` (one row per person, profile columns included, `version` for projections), `personality_tags`, `user_cover_photos`, `media_uploads`, `block_projection`, `outbox`, `processed_events` | The user row is created from the event or from the first `GET /me`, whichever comes first |
 | journey-service | `journeys` (PostGIS points, GiST indexes), `journey_matches` (directional match rows), `journey_likes`, `journey_comments`, `journey_shares`, `hidden_journeys`, `user_projection`, `block_projection`, `outbox`, `processed_events` | Coordinates never leave the service; clients see place names only |
 | social-service | `follows`, `blocks`, `reports`, `moderation_state`, `user_projection`, `outbox`, `processed_events` | Source of truth for blocks; other services keep a versioned `block_projection` |
+| chat-service | `connection_requests` (one pending per pair), `connections` (user_a < user_b), `conversations`, `conversation_members` (read markers, mute, clear, unread count), `messages`, projections, `outbox`, `processed_events` | Request cards snapshot the route and scores at send time; the unmasked request text is admin-only |
+| notification-service | `device_tokens`, `notification_prefs`, `notification_log` (dedupe per user and key), `user_projection`, `processed_events`; Redis db1 `notif:*` | Tokens FCM reports as unregistered are deleted |
 | notification-service | Redis db1 `notif:sent:{event_id}` (24 h) | No database |
 | api-gateway | Redis db2 `gw:rl:*` | Rate-limit windows |
 
@@ -142,8 +147,11 @@ The full catalogue, with a JSON Schema per event, is in `contracts/events/` (gen
 | `social.followed`, `social.unfollowed` | social → user | Follower counters |
 | `social.user_blocked`, `social.user_unblocked` | social → user, journey | Block projections (unblock keeps a tombstone); journey-service also recomputes the pair's matches |
 | `safety.content_hidden`, `safety.content_unhidden` | social → journey | Moderation flags on journeys and comments |
-| `journey.created`, `journey.updated`, `journey.deleted`, `journey.status_changed` | journey → journey (matching worker), user (counters) | Chat (M5) will also consume them |
-| `journey.match_found`, `journey.liked`, `journey.commented`, `journey.reminder_due` | journey → notification (M5) | Published ahead of their consumer |
+| `journey.created`, `journey.updated`, `journey.deleted`, `journey.status_changed` | journey → journey (matching worker), user (counters), chat (expire requests, system messages) | |
+| `journey.match_found`, `journey.liked`, `journey.commented`, `journey.reminder_due` | journey → notification | Pushes |
+| `chat.request_sent`, `chat.request_accepted` | chat → notification, journey (`accepted` takes a seat) | Fat: sender/receiver names and the route |
+| `chat.request_rejected`, `chat.request_withdrawn`, `chat.request_expired` | chat → (none yet) | Analytics only in P1, published without `mandatory` |
+| `chat.message_created` | chat → notification | Carries `recipient_muted` and `recipient_online` (presence at send time) |
 | `notification.email.requested` | auth (direct, confirmed) → notification | The API returns 503 if publishing fails. The consumer drops expired requests and skips duplicates |
 
 Producers write events with a transactional outbox. The relay uses `FOR UPDATE SKIP LOCKED` and
@@ -255,10 +263,47 @@ sequenceDiagram
   candidate query runs on a BitmapAnd of the two GiST indexes. See
   [perf/matching.md](perf/matching.md).
 
+## Chat and realtime (M5)
+
+```mermaid
+sequenceDiagram
+    participant A as App (sender)
+    participant GW as api-gateway
+    participant WS as chat-ws
+    participant API as chat-api
+    participant R as Redis (realtime)
+    participant MQ as RabbitMQ
+    participant N as notification
+    A->>GW: WS /v1/ws?token=... (edge token check, connect limit)
+    GW->>WS: proxied socket; presence + subscribe user:{a}
+    A->>WS: message.send {conversation_id, client_msg_id, body}
+    WS->>API: POST /internal/messages (service token: chat-ws)
+    API->>API: one transaction: member? connected? not blocked? insert (idempotent), unread+1, outbox chat.message_created (recipient_online snapshot)
+    API-->>WS: message
+    WS-->>A: ack {message_id}
+    API->>R: after commit: PUBLISH user:{a}, user:{b} message.new; badge
+    R-->>WS: every replica holding a or b forwards it
+    MQ->>N: chat.message_created (after the outbox relay)
+    N->>N: push only if b was offline at send time AND is offline now AND hasn't muted
+```
+
+- **Connection requests:** the cheap local checks run first, then the one internal call
+  (journey-service join-check, which fails closed). The race-prone checks run again inside the
+  insert transaction, behind a unique index on the pair. Accept is one transaction.
+- **chat-ws is stateless.** It holds sockets only and persists through chat-api. One Redis
+  pub/sub connection per replica subscribes the users it holds, so no sticky sessions are
+  needed. Presence is a sorted set per user whose members expire, refreshed by the client's
+  25 s ping.
+- **Frames go out only after commit** (an SQLAlchemy `after_commit` hook), so a rolled-back
+  accept never reaches a client. On reconnect, clients catch up with
+  `GET /v1/conversations?since=`.
+- **Pushes:** domain events → preferences → presence/mute (chat) → dedupe log → FCM, with
+  likes batched per trip.
+
 **Later.** Matching compares endpoints and dates, not route geometry. If product wants "same
 road" matching (for example, Delhi to Manali matching Chandigarh to Manali), add a simplified
 route `LineString` per journey and score corridor overlap, with H3 cells as a candidate index.
-Chat (M5), eKYC (M6) and admin (M7) follow the milestone plan in RECON.md.
+eKYC (M6), admin (M7) and hardening (M8) follow the milestone plan in RECON.md.
 
 New services copy the user-service template:
 - `cogo-common` for logging, errors, the token verifier, DB, outbox/inbox and topology.

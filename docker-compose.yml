@@ -20,6 +20,10 @@ x-auth-db-url: &auth-db-url postgresql+asyncpg://${AUTH_DB_USER:-auth_svc}:${AUT
 x-user-db-url: &user-db-url postgresql+asyncpg://${USER_DB_USER:-user_svc}:${USER_DB_PASSWORD:?run make secrets}@postgres:5432/${USER_DB:-userdb}
 x-journey-db-url: &journey-db-url postgresql+asyncpg://${JOURNEY_DB_USER:-journey_svc}:${JOURNEY_DB_PASSWORD:?run make secrets}@postgres:5432/${JOURNEY_DB:-journeydb}
 x-social-db-url: &social-db-url postgresql+asyncpg://${SOCIAL_DB_USER:-social_svc}:${SOCIAL_DB_PASSWORD:?run make secrets}@postgres:5432/${SOCIAL_DB:-socialdb}
+x-chat-db-url: &chat-db-url postgresql+asyncpg://${CHAT_DB_USER:-chat_svc}:${CHAT_DB_PASSWORD:?run make secrets}@postgres:5432/${CHAT_DB:-chatdb}
+x-notification-db-url: &notification-db-url postgresql+asyncpg://${NOTIFICATION_DB_USER:-notification_svc}:${NOTIFICATION_DB_PASSWORD:?run make secrets}@postgres:5432/${NOTIFICATION_DB:-notificationdb}
+# Realtime Redis: chat pub/sub fan-out, presence, message rate limits (chat-api, chat-ws, notification)
+x-realtime-redis: &realtime-redis redis://redis:6379/6
 # Public keys of every service (verify service tokens); each service gets only its own private key.
 x-service-keys: &service-keys ./secrets/service-keys/public:/run/service-keys:ro
 x-rabbit-url: &rabbit-url amqp://${RABBITMQ_USER:-cogo}:${RABBITMQ_PASSWORD:?run make secrets}@rabbitmq:5672/
@@ -44,6 +48,12 @@ services:
       SOCIAL_DB: ${SOCIAL_DB:-socialdb}
       SOCIAL_DB_USER: ${SOCIAL_DB_USER:-social_svc}
       SOCIAL_DB_PASSWORD: ${SOCIAL_DB_PASSWORD:?run make secrets}
+      CHAT_DB: ${CHAT_DB:-chatdb}
+      CHAT_DB_USER: ${CHAT_DB_USER:-chat_svc}
+      CHAT_DB_PASSWORD: ${CHAT_DB_PASSWORD:?run make secrets}
+      NOTIFICATION_DB: ${NOTIFICATION_DB:-notificationdb}
+      NOTIFICATION_DB_USER: ${NOTIFICATION_DB_USER:-notification_svc}
+      NOTIFICATION_DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD:?run make secrets}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./infra/postgres/initdb/20-service-databases.sh:/docker-entrypoint-initdb.d/20-service-databases.sh:ro
@@ -252,17 +262,88 @@ services:
       rabbitmq: { condition: service_healthy }
       auth-service: { condition: service_healthy }
 
+  # ---------------------------------------------------------------- chat (one image, two deployables)
+  chat-migrate:
+    <<: *service
+    restart: "no"
+    image: cogo/chat-service:dev
+    build: &chat-build
+      context: ./services/chat
+      additional_contexts: { common: ./libs/common }
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: *chat-db-url
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  chat-service:  # chat-api: requests, conversations, internal API, consumers
+    <<: *service
+    image: cogo/chat-service:dev
+    build: *chat-build
+    environment:
+      <<: *common-env
+      DATABASE_URL: *chat-db-url
+      RABBITMQ_URL: *rabbit-url
+      REDIS_URL: *realtime-redis
+      AUTH_JWKS_URL: http://auth-service:8000/.well-known/jwks.json
+      JWT_ISSUER: ${JWT_ISSUER:-cogo-auth}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-cogo-api}
+      JOURNEY_SERVICE_URL: http://journey-service:8000
+      CURSOR_SECRET: ${CURSOR_SECRET:?run make secrets}
+    secrets: [{ source: chat_service_key, target: service_key }]
+    volumes: [*service-keys]
+    depends_on:
+      chat-migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      auth-service: { condition: service_healthy }
+
+  chat-ws:  # sockets only (stateless); persists through chat-service's internal API
+    <<: *service
+    image: cogo/chat-service:dev
+    build: *chat-build
+    command: ["uvicorn", "app.ws.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000",
+              "--proxy-headers", "--no-access-log", "--timeout-graceful-shutdown", "20"]
+    environment:
+      <<: *common-env
+      REDIS_URL: *realtime-redis
+      CHAT_API_URL: http://chat-service:8000
+      AUTH_JWKS_URL: http://auth-service:8000/.well-known/jwks.json
+      JWT_ISSUER: ${JWT_ISSUER:-cogo-auth}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-cogo-api}
+    secrets: [{ source: chat_ws_key, target: service_key }]
+    depends_on:
+      chat-service: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
   # ---------------------------------------------------------------- notification
+  notification-migrate:
+    <<: *service
+    restart: "no"
+    image: cogo/notification-service:dev
+    build: &notification-build
+      context: ./services/notification
+      additional_contexts: { common: ./libs/common }
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: *notification-db-url
+    depends_on:
+      postgres: { condition: service_healthy }
+
   notification-service:
     <<: *service
     image: cogo/notification-service:dev
-    build:
-      context: ./services/notification
-      additional_contexts: { common: ./libs/common }
+    build: *notification-build
     environment:
       <<: *common-env
       RABBITMQ_URL: *rabbit-url
       REDIS_URL: redis://redis:6379/1
+      REALTIME_REDIS_URL: *realtime-redis
+      DATABASE_URL: *notification-db-url
+      AUTH_JWKS_URL: http://auth-service:8000/.well-known/jwks.json
+      JWT_ISSUER: ${JWT_ISSUER:-cogo-auth}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-cogo-api}
+      PUSH_PROVIDER: ${PUSH_PROVIDER:-mock}
       SMTP_HOST: ${SMTP_HOST:-mailpit}
       SMTP_PORT: ${SMTP_PORT:-1025}
       SMTP_STARTTLS: ${SMTP_STARTTLS:-false}
@@ -270,8 +351,10 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       MAIL_FROM: ${MAIL_FROM:-CoGo <no-reply@cogo.app>}
     depends_on:
+      notification-migrate: { condition: service_completed_successfully }
       rabbitmq: { condition: service_healthy }
       redis: { condition: service_healthy }
+      auth-service: { condition: service_healthy }
 
   # ---------------------------------------------------------------- edge
   api-gateway:
@@ -287,6 +370,9 @@ services:
       USER_SERVICE_URL: http://user-service:8000
       JOURNEY_SERVICE_URL: http://journey-service:8000
       SOCIAL_SERVICE_URL: http://social-service:8000
+      CHAT_SERVICE_URL: http://chat-service:8000
+      CHAT_WS_URL: ws://chat-ws:8000
+      NOTIFICATION_SERVICE_URL: http://notification-service:8000
       AUTH_JWKS_URL: http://auth-service:8000/.well-known/jwks.json
       JWT_ISSUER: ${JWT_ISSUER:-cogo-auth}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-cogo-api}
@@ -300,6 +386,9 @@ services:
       user-service: { condition: service_healthy }
       journey-service: { condition: service_healthy }
       social-service: { condition: service_healthy }
+      chat-service: { condition: service_healthy }
+      chat-ws: { condition: service_healthy }
+      notification-service: { condition: service_healthy }
 
   # ---------------------------------------------------------------- observability (opt-in)
   # make obs-up   (and set OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 in .env for traces)
@@ -335,6 +424,10 @@ secrets:
     file: ./secrets/service-keys/journey-service.pem
   social_service_key:
     file: ./secrets/service-keys/social-service.pem
+  chat_service_key:
+    file: ./secrets/service-keys/chat-service.pem
+  chat_ws_key:
+    file: ./secrets/service-keys/chat-ws.pem
 
 networks:
   backend:

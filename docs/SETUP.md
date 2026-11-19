@@ -84,6 +84,8 @@ Settings you are most likely to change:
 | `ACCESS_TOKEN_TTL_SECONDS` / `REFRESH_TOKEN_TTL_DAYS` | 900 / 30 | Token lifetimes |
 | `LOG_JSON` | `true` | Set `false` for human-readable local logs |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | empty | Set `http://jaeger:4318` and run `make obs-up` to collect traces |
+| `PLACES_PROVIDER` | `mock` | `google` uses Places API (New); set `GOOGLE_PLACES_API_KEY` in `.env.secrets` |
+| `PUSH_PROVIDER` | `mock` | `mock` records pushes (read them at `GET /v1/me/devices/test-pushes`). For `fcm`, mount the Firebase service-account JSON into notification-service and set `FCM_CREDENTIALS_FILE` to its path |
 
 Each service receives only the variables it needs. The `environment:` block of each service in
 `docker-compose.yml` is the definitive list.
@@ -166,6 +168,8 @@ cd services/auth && uv run pytest -q -k refresh    # one project, filtered
 | services/api-gateway | Route allowlist, raw-path traversal, per-IP/per-user limits, body caps, upstream failure mapping, CORS, header hygiene |
 | services/journey | Journey rules and lifecycle, feed ranking and filters, engagement, share pages, Places; matching end to end (scores, mutual eligibility, blocks, hides, moderation, push cap, paging, concurrent recomputes, the sweeper) |
 | services/social | Follows, blocks, reports and auto-hide |
+| services/chat | Masking (Indian phone formats, emails, links), every request rule and race, accept as one transaction, unread counts under concurrent send/read, receipts, mute, clear, block and journey consumers; chat-ws on a real server (auth, presence, chat both ways, typing, receipts, idle close) |
+| services/notification | Email delivery; devices and preferences; every push path (prefs, presence then and now, mute, dedupe, dead tokens, inactive users, like batching) |
 
 The first run downloads container images, so it takes longer.
 
@@ -241,6 +245,9 @@ verifier, a database, Alembic, an event consumer and tests). Then:
 | `401 invalid_refresh_token` after `make clean` | Sessions lived in Redis, which was wiped (the signing key in `secrets/` is kept). Sign in again |
 | `503 provider_disabled` on `/v1/auth/google` | `FIREBASE_PROJECT_ID` is empty in `.env` |
 | Tests fail with Docker errors | testcontainers needs the Docker socket. Run `docker info`. On rootless or remote Docker, set `DOCKER_HOST` |
+| A socket closes with `4401` | The access token in `?token=` is invalid or expired (15 min). Refresh, then reconnect |
+| A socket closes with `1013` or `1012` | chat-ws is unreachable or restarting: reconnect with backoff, then `GET /v1/conversations?since=` |
+| No pushes in dev | `PUSH_PROVIDER=mock` records them instead: `GET /v1/me/devices/test-pushes` (after `POST /v1/me/devices`) |
 | A Matches banner stays "Finding matches…" | The scheduler sweep re-runs `pending` journeys after a minute. If it persists: `make logs-journey-service` and check the `journey-service.dlq` depth |
 | Start completely fresh | `make clean && make up` (**deletes** local Postgres/Redis/RabbitMQ data) |
 

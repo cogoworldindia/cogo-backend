@@ -84,7 +84,7 @@ Follows spec §13, in order. Each milestone ends with migrations, OpenAPI and ev
 |---|---|
 | M0 | `cogo-common`: service tokens, internal client + breaker, app config, cursors, scoring, rate limits, idempotent consumer, versioned projections, per-service queues + dispatcher, broker start with retries. `contracts/` + generators (`make contracts`). Service keys in `make secrets`. **Done.** |
 | M1 | user-service single-table migration, `/v1/me`, personality tags, covers, media upload (RustFS in dev), `user.*` events. social-service follows → counters. Places proxy (journey-service, mock + Google providers). **Done.** |
-| M2 | journey-service: journeys CRUD, `journey.*` events, projections, `/me/journeys`, scheduler |
+| M2 | journey-service: journeys CRUD, `journey.*` events, projections, `/me/journeys`, scheduler. user-service `journeys_count`. **Done.** |
 | M3 | Feed + filters + engagement; social blocks and reports; batch relation endpoints |
 | M4 | matching-worker |
 | M5 | chat-service + chat-ws; notification-service device tokens, prefs, FCM (mock) |

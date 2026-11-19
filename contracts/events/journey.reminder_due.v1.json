@@ -1,0 +1,41 @@
+{
+  "description": "journey-scheduler -> journey.reminder_due (\u224824 h before start).",
+  "properties": {
+    "companion_ids": {
+      "default": [],
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Companion Ids",
+      "type": "array"
+    },
+    "journey_id": {
+      "format": "uuid",
+      "title": "Journey Id",
+      "type": "string"
+    },
+    "owner_id": {
+      "format": "uuid",
+      "title": "Owner Id",
+      "type": "string"
+    },
+    "route_text": {
+      "title": "Route Text",
+      "type": "string"
+    },
+    "start_at": {
+      "format": "date-time",
+      "title": "Start At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "journey_id",
+    "owner_id",
+    "start_at",
+    "route_text"
+  ],
+  "title": "JourneyReminderDue",
+  "type": "object"
+}

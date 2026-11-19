@@ -206,6 +206,8 @@ services:
       JWT_AUDIENCE: ${JWT_AUDIENCE:-cogo-api}
       PLACES_PROVIDER: ${PLACES_PROVIDER:-mock}
       GOOGLE_PLACES_API_KEY: ${GOOGLE_PLACES_API_KEY:-}
+      SOCIAL_SERVICE_URL: http://social-service:8000
+      CURSOR_SECRET: ${CURSOR_SECRET:?run make secrets}
     secrets: [{ source: journey_service_key, target: service_key }]
     volumes: [*service-keys]
     depends_on:

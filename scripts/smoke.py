@@ -191,6 +191,43 @@ def main() -> int:
     check("legacy GET /v1/users/me still works for the current app",
           status == 200 and body["data"]["profile"]["full_name"] == "Alice Traveller", body)
 
+    print("journeys (M2)")
+    start = time.time() + 3 * 86400
+    iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))  # noqa: E731
+    journey_body = {"origin_place_id": "mock:noida-uttar-pradesh", "destination_place_id": "mock:rishikesh-uttarakhand",
+                    "start_at": iso(start), "end_at": iso(start + 30 * 3600), "who_can_join": "anyone", "group_size": 4,
+                    "caption": "Weekend in the hills"}
+    status, _, body = call("POST", f"{GATEWAY}/v1/journeys", journey_body, token=a["access_token"])
+    journey = (body or {}).get("data") or {}
+    check("alice posts a journey (journey-service)",
+          status == 201 and journey.get("seats_left") == 3 and journey.get("matches", {}).get("state") == "pending", body)
+    status, _, body = call("POST", f"{GATEWAY}/v1/journeys", {**journey_body, "start_at": iso(time.time() + 60)}, token=a["access_token"])
+    check("journey starting in < 15 min is rejected", status == 400 and body["error"]["type"] == "invalid_start", body)
+    status, _, body = call("GET", f"{GATEWAY}/v1/journeys/{journey.get('id')}", token=b["access_token"])
+    view = (body or {}).get("data") or {}
+    check("bob sees alice's journey with host + vibe match, no coordinates",
+          status == 200 and view.get("host", {}).get("name") == "Alice Traveller" and isinstance(view.get("vibe_match"), int)
+          and "lat" not in json.dumps(view), body)
+    status, _, body = call("GET", f"{GATEWAY}/v1/users/{a['user_id']}/journeys", token=b["access_token"])
+    check("alice's public journeys list", status == 200 and [j["id"] for j in body["data"]["items"]] == [journey.get("id")], body)
+    status, _, body = call("GET", f"{GATEWAY}/v1/me/journeys?tab=upcoming", token=a["access_token"])
+    check("Your Journeys (upcoming)", status == 200 and body["data"]["items"][0]["id"] == journey.get("id"), body)
+    counted = False
+    for _ in range(40):  # journeys_count is projected into user-service from journey.created
+        _, _, body = call("GET", f"{GATEWAY}/v1/me", token=a["access_token"])
+        if ((body or {}).get("data") or {}).get("stats", {}).get("journeys") == 1:
+            counted = True
+            break
+        time.sleep(0.25)
+    check("profile journey count updated via events", counted, body)
+    status, _, body = call("PATCH", f"{GATEWAY}/v1/journeys/{journey.get('id')}", {"caption": "Rishikesh rafting!"}, token=b["access_token"])
+    check("only the host can edit", status == 403 and body["error"]["type"] == "not_owner", body)
+    status, _, body = call("PATCH", f"{GATEWAY}/v1/journeys/{journey.get('id')}", {"caption": "Rishikesh rafting!"}, token=a["access_token"])
+    check("host edits caption", status == 200 and body["data"]["caption"] == "Rishikesh rafting!", body)
+    status, _, _ = call("DELETE", f"{GATEWAY}/v1/journeys/{journey.get('id')}", token=a["access_token"])
+    status2, _, _ = call("GET", f"{GATEWAY}/v1/journeys/{journey.get('id')}", token=b["access_token"])
+    check("host deletes; journey disappears", status == 200 and status2 == 404, (status, status2))
+
     print("OTP brute force")
     call("POST", f"{GATEWAY}/v1/auth/email/send", {"email": carol})
     real = otp_for(carol)

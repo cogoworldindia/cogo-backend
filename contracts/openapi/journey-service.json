@@ -1,6 +1,126 @@
 {
   "components": {
     "schemas": {
+      "Counts": {
+        "properties": {
+          "comments": {
+            "title": "Comments",
+            "type": "integer"
+          },
+          "likes": {
+            "title": "Likes",
+            "type": "integer"
+          },
+          "shares": {
+            "title": "Shares",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "likes",
+          "comments",
+          "shares"
+        ],
+        "title": "Counts",
+        "type": "object"
+      },
+      "Envelope_JourneyOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/JourneyOut"
+          },
+          "error": {
+            "title": "Error",
+            "type": "null"
+          },
+          "message": {
+            "default": "OK",
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "const": "success",
+            "default": "success",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "Envelope[JourneyOut]",
+        "type": "object"
+      },
+      "Envelope_NoneType_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "title": "Data",
+            "type": "null"
+          },
+          "error": {
+            "title": "Error",
+            "type": "null"
+          },
+          "message": {
+            "default": "OK",
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "const": "success",
+            "default": "success",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "Envelope[NoneType]",
+        "type": "object"
+      },
+      "Envelope_Page_JourneyOut__": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/Page_JourneyOut_"
+          },
+          "error": {
+            "title": "Error",
+            "type": "null"
+          },
+          "message": {
+            "default": "OK",
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "const": "success",
+            "default": "success",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "Envelope[Page[JourneyOut]]",
+        "type": "object"
+      },
       "Envelope_PlaceOut_": {
         "properties": {
           "code": {
@@ -9,7 +129,7 @@
             "type": "integer"
           },
           "data": {
-            "$ref": "#/components/schemas/PlaceOut"
+            "$ref": "#/components/schemas/app__api__places__PlaceOut"
           },
           "error": {
             "title": "Error",
@@ -82,25 +202,80 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
-      "PlaceOut": {
+      "JourneyCreate": {
+        "additionalProperties": false,
         "properties": {
-          "lat": {
-            "title": "Lat",
-            "type": "number"
+          "caption": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption"
           },
-          "lng": {
-            "title": "Lng",
-            "type": "number"
-          },
-          "name": {
-            "title": "Name",
+          "destination_place_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Destination Place Id",
             "type": "string"
           },
-          "place_id": {
-            "title": "Place Id",
+          "end_at": {
+            "format": "date-time",
+            "title": "End At",
             "type": "string"
           },
-          "region": {
+          "group_size": {
+            "title": "Group Size",
+            "type": "integer"
+          },
+          "origin_place_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Origin Place Id",
+            "type": "string"
+          },
+          "session_token": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Token"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          },
+          "who_can_join": {
+            "maxLength": 30,
+            "title": "Who Can Join",
+            "type": "string"
+          }
+        },
+        "required": [
+          "origin_place_id",
+          "destination_place_id",
+          "start_at",
+          "end_at",
+          "who_can_join",
+          "group_size"
+        ],
+        "title": "JourneyCreate",
+        "type": "object"
+      },
+      "JourneyOut": {
+        "description": "Spec \u00a76.1 Journey DTO. Coordinates are never exposed, only place names.",
+        "properties": {
+          "caption": {
             "anyOf": [
               {
                 "type": "string"
@@ -109,17 +284,273 @@
                 "type": "null"
               }
             ],
-            "title": "Region"
+            "title": "Caption"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/Counts"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/app__schemas__PlaceOut"
+          },
+          "end_at": {
+            "format": "date-time",
+            "title": "End At",
+            "type": "string"
+          },
+          "group_size": {
+            "title": "Group Size",
+            "type": "integer"
+          },
+          "host": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_own": {
+            "title": "Is Own",
+            "type": "boolean"
+          },
+          "journey_match": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Journey Match"
+          },
+          "matches": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MatchesOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "origin": {
+            "$ref": "#/components/schemas/app__schemas__PlaceOut"
+          },
+          "seats_left": {
+            "title": "Seats Left",
+            "type": "integer"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "vibe_match": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vibe Match"
+          },
+          "viewer": {
+            "$ref": "#/components/schemas/ViewerState"
+          },
+          "who_can_join": {
+            "$ref": "#/components/schemas/WhoCanJoin"
           }
         },
         "required": [
-          "place_id",
-          "name",
-          "region",
-          "lat",
-          "lng"
+          "id",
+          "host",
+          "origin",
+          "destination",
+          "start_at",
+          "end_at",
+          "who_can_join",
+          "group_size",
+          "seats_left",
+          "caption",
+          "status",
+          "is_own",
+          "counts",
+          "viewer",
+          "vibe_match"
         ],
-        "title": "PlaceOut",
+        "title": "JourneyOut",
+        "type": "object"
+      },
+      "JourneyPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "caption": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption"
+          },
+          "destination_place_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Place Id"
+          },
+          "end_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End At"
+          },
+          "group_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Size"
+          },
+          "origin_place_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Place Id"
+          },
+          "session_token": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Token"
+          },
+          "start_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start At"
+          },
+          "who_can_join": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Who Can Join"
+          }
+        },
+        "title": "JourneyPatch",
+        "type": "object"
+      },
+      "MatchesOut": {
+        "properties": {
+          "best_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Score"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "done"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "count",
+          "best_score",
+          "state"
+        ],
+        "title": "MatchesOut",
+        "type": "object"
+      },
+      "Page_JourneyOut_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/JourneyOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "Page[JourneyOut]",
         "type": "object"
       },
       "SuggestionOut": {
@@ -150,6 +581,104 @@
           "secondary_text"
         ],
         "title": "SuggestionOut",
+        "type": "object"
+      },
+      "UserSummary": {
+        "properties": {
+          "age": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age"
+          },
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
+          "connection_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "none",
+                  "requested",
+                  "incoming",
+                  "connected",
+                  "blocked"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection Status"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_following": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Following"
+          },
+          "kyc_level": {
+            "title": "Kyc Level",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "id",
+          "username",
+          "name",
+          "age",
+          "avatar_url",
+          "kyc_level",
+          "is_following",
+          "connection_status"
+        ],
+        "title": "UserSummary",
         "type": "object"
       },
       "ValidationError": {
@@ -191,6 +720,107 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "ViewerState": {
+        "properties": {
+          "liked": {
+            "title": "Liked",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "liked"
+        ],
+        "title": "ViewerState",
+        "type": "object"
+      },
+      "WhoCanJoin": {
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "label"
+        ],
+        "title": "WhoCanJoin",
+        "type": "object"
+      },
+      "app__api__places__PlaceOut": {
+        "properties": {
+          "lat": {
+            "title": "Lat",
+            "type": "number"
+          },
+          "lng": {
+            "title": "Lng",
+            "type": "number"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "place_id": {
+            "title": "Place Id",
+            "type": "string"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          }
+        },
+        "required": [
+          "place_id",
+          "name",
+          "region",
+          "lat",
+          "lng"
+        ],
+        "title": "PlaceOut",
+        "type": "object"
+      },
+      "app__schemas__PlaceOut": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "place_id": {
+            "title": "Place Id",
+            "type": "string"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          }
+        },
+        "required": [
+          "place_id",
+          "name",
+          "region"
+        ],
+        "title": "PlaceOut",
+        "type": "object"
       }
     }
   },
@@ -200,6 +830,257 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/v1/journeys": {
+      "post": {
+        "operationId": "create_journey_v1_journeys_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JourneyCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_JourneyOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Journey",
+        "tags": [
+          "journeys"
+        ]
+      }
+    },
+    "/v1/journeys/{journey_id}": {
+      "delete": {
+        "operationId": "delete_journey_v1_journeys__journey_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Journey Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_NoneType_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Journey",
+        "tags": [
+          "journeys"
+        ]
+      },
+      "get": {
+        "operationId": "get_journey_v1_journeys__journey_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Journey Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_JourneyOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Journey",
+        "tags": [
+          "journeys"
+        ]
+      },
+      "patch": {
+        "operationId": "update_journey_v1_journeys__journey_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Journey Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JourneyPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_JourneyOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Journey",
+        "tags": [
+          "journeys"
+        ]
+      }
+    },
+    "/v1/me/journeys": {
+      "get": {
+        "operationId": "my_journeys_v1_me_journeys_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tab",
+            "required": false,
+            "schema": {
+              "default": "upcoming",
+              "enum": [
+                "upcoming",
+                "completed"
+              ],
+              "title": "Tab",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_Page_JourneyOut__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "My Journeys",
+        "tags": [
+          "journeys"
+        ]
+      }
+    },
     "/v1/places/autocomplete": {
       "get": {
         "operationId": "autocomplete_v1_places_autocomplete_get",
@@ -317,6 +1198,91 @@
         "summary": "Details",
         "tags": [
           "places"
+        ]
+      }
+    },
+    "/v1/users/{user_id}/journeys": {
+      "get": {
+        "operationId": "user_journeys_v1_users__user_id__journeys_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tab",
+            "required": false,
+            "schema": {
+              "default": "upcoming",
+              "enum": [
+                "upcoming",
+                "completed"
+              ],
+              "title": "Tab",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_Page_JourneyOut__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "User Journeys",
+        "tags": [
+          "journeys"
         ]
       }
     }

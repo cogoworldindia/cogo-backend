@@ -16,6 +16,11 @@ EVENTS = {
     K.SOCIAL_FOLLOWED: c.SocialFollowed,
     K.SOCIAL_UNFOLLOWED: c.SocialFollowed,
     K.EMAIL_REQUESTED: c.EmailRequested,
+    K.JOURNEY_CREATED: c.JourneySummary,
+    K.JOURNEY_UPDATED: c.JourneySummary,
+    K.JOURNEY_DELETED: c.JourneySummary,
+    K.JOURNEY_STATUS_CHANGED: c.JourneySummary,
+    K.JOURNEY_REMINDER_DUE: c.JourneyReminderDue,
 }
 
 out = Path(sys.argv[1])

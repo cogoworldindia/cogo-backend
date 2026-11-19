@@ -1,0 +1,85 @@
+{
+  "$defs": {
+    "UserRef": {
+      "description": "Display data carried in fat events so consumers never call back.",
+      "properties": {
+        "avatar_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Avatar Url"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Username"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "UserRef",
+      "type": "object"
+    }
+  },
+  "description": "social-service -> `social.followed` / `social.unfollowed`.",
+  "properties": {
+    "followee_id": {
+      "format": "uuid",
+      "title": "Followee Id",
+      "type": "string"
+    },
+    "follower": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/UserRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "follower_id": {
+      "format": "uuid",
+      "title": "Follower Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "follower_id",
+    "followee_id"
+  ],
+  "title": "SocialFollowed",
+  "type": "object"
+}

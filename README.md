@@ -18,11 +18,15 @@ versions and holds the local stack.
 | `libs/common` | `cogo-common` | Shared infrastructure: logging, error envelope, JWKS/JWT verification, DB/Redis helpers, outbox/inbox, RabbitMQ topology, telemetry |
 | `services/api-gateway` | `api-gateway` | Public edge: route allowlist, edge JWT check, Redis rate limits, streaming proxy |
 | `services/auth` | `auth-service` | Identity: email OTP, Google (Firebase) sign-in, account linking, EdDSA access tokens + JWKS, rotating refresh sessions |
-| `services/user` | `user-service` | User records and profiles; consumes `user.registered` |
+| `services/user` | `user-service` | Profiles, tags, covers, media uploads; emits `user.*`; consumes `user.registered`, `social.*followed` |
+| `services/journey` | `journey-service` | Places proxy (M1); journeys, feed and matching arrive in M2–M4 |
+| `services/social` | `social-service` | Follows (M1); blocks, reports and moderation arrive in M3 |
 | `services/notification` | `notification-service` | Queue-driven email worker (no HTTP send API) |
 | `services/mail` | `mail-service` | **Retired** (Java/Gmail). Not started by compose; kept only until its unpushed commit is dealt with |
 
 ## Documentation
+
+Phase 1 progress and every difference from the build spec are tracked in [docs/RECON.md](docs/RECON.md).
 
 | Document | For |
 |---|---|
@@ -47,6 +51,7 @@ make smoke     # end-to-end check through the gateway
 | http://localhost:8000 | API gateway (the only API endpoint clients use) |
 | http://localhost:8025 | Mailpit: every email the stack sends (including OTP codes) lands here |
 | http://localhost:15672 | RabbitMQ management (user `cogo`, password in `.env.secrets`) |
+| http://localhost:9000 | Media store (RustFS, S3-compatible): presigned uploads and served files |
 | `localhost:5433` | Postgres (superuser `postgres`; one role per service DB) |
 
 `make help` lists everything. The most used targets are `logs-<service>`, `test`, `lint`, `migrate`

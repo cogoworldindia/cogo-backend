@@ -1,10 +1,10 @@
 # CoGo backend — local development entry points. `make help` lists targets.
 COMPOSE  := docker compose --env-file .env --env-file .env.secrets
-PY_PROJECTS := libs/common services/auth services/user services/notification services/api-gateway
+PY_PROJECTS := libs/common services/auth services/user services/journey services/social services/notification services/api-gateway
 
 .DEFAULT_GOAL := help
 .PHONY: help setup secrets check-docker build up down restart ps logs logs-% migrate obs-up \
-        test lint smoke clean
+        test lint smoke contracts clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_%-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n",$$1,$$2}'
@@ -52,6 +52,10 @@ test: ## Run every test suite (needs Docker for testcontainers)
 
 lint: ## ruff + mypy for every Python project
 	@set -e; for p in $(PY_PROJECTS); do echo "== $$p"; (cd $$p && uv run --quiet ruff check . && uv run --quiet ruff format --check . && uv run --quiet mypy $$( [ -d src ] && echo src || echo app )); done
+
+contracts: ## Regenerate contracts/ (event JSON Schemas + OpenAPI); CI fails if they drift
+	@cd libs/common && uv run --quiet python ../../scripts/export_event_schemas.py ../../contracts/events
+	@set -e; for s in auth user journey social; do (cd services/$$s && PYTHONPATH=. uv run --quiet python ../../scripts/export_openapi.py ../../contracts/openapi/$$s-service.json); done
 
 smoke: ## End-to-end check against the running stack
 	@python3 scripts/smoke.py

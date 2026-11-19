@@ -90,7 +90,9 @@ def sign_in(email: str) -> dict[str, Any]:
 def queue_depth(name: str) -> int:
     auth = base64.b64encode(f"{os.environ.get('RABBITMQ_USER', 'cogo')}:{os.environ['RABBITMQ_PASSWORD']}".encode()).decode()
     _, _, q = call("GET", f"{RABBIT}/api/queues/%2F/{urllib.parse.quote(name)}", headers={"Authorization": f"Basic {auth}"})
-    return int(q.get("messages", 0)) if isinstance(q, dict) else -1
+    if not isinstance(q, dict) or "messages" not in q:
+        return -1  # queue missing: a typo or a lost declaration must not read as "empty"
+    return int(q["messages"])
 
 
 def main() -> int:
@@ -118,8 +120,9 @@ def main() -> int:
     print("access control")
     b = sign_in(bob)
     status, _, body = call("GET", f"{GATEWAY}/v1/users/{a['user_id']}", token=b["access_token"])
-    check("bob sees only alice's public profile",
-          status == 200 and set(body["data"]) == {"id", "full_name", "bio", "profile_photo_url"}, body)
+    private = {"dob", "date_of_birth", "gender", "email", "phone", "kyc_prompt", "account_status"}
+    check("bob sees only alice's public profile (no DOB, gender or KYC detail)",
+          status == 200 and body["data"]["id"] == a["user_id"] and not private & set(body["data"]), body)
     for method, path in (("PUT", f"/v1/users/user/{a['user_id']}"), ("PATCH", f"/v1/users/{a['user_id']}/profile")):
         status, _, _ = call(method, f"{GATEWAY}{path}", {"status": "deleted"}, token=b["access_token"])
         check(f"{method} {path.replace(a['user_id'], '<alice>')} impossible", status in (404, 405), status)
@@ -128,6 +131,65 @@ def main() -> int:
         check(f"{method} {path} not exposed", status == 404, status)
     status, _, _ = call("GET", f"{GATEWAY}/v1/users/me", headers={"Authorization": a["access_token"]})
     check("token without 'Bearer' prefix rejected", status == 401, status)
+
+    print("profiles (M1)")
+    status, _, body = call("GET", f"{GATEWAY}/v1/personality-tags", token=a["access_token"])
+    tags = body["data"] if status == 200 else []
+    check("personality tags", len(tags) >= 10, status)
+    status, _, body = call("GET", f"{GATEWAY}/v1/places/autocomplete?q=noi", token=a["access_token"])
+    noida = next((p for p in (body or {}).get("data", []) if p["primary_text"] == "Noida"), None)
+    check("places autocomplete (journey-service)", status == 200 and noida is not None, body)
+    status, _, body = call("PATCH", f"{GATEWAY}/v1/me", {
+        "name": "Alice Traveller", "dob": "1995-05-05", "gender": "female", "profession": "Designer",
+        "city_place_id": noida["place_id"] if noida else "x", "personality_tag_ids": [t["id"] for t in tags[:3]]},
+        token=a["access_token"])
+    me = (body or {}).get("data") or {}
+    check("PATCH /v1/me resolves city via journey-service and assigns a username",
+          status == 200 and (me.get("city") or {}).get("name") == "Noida" and bool(me.get("username")), body)
+    status, _, body = call("POST", f"{GATEWAY}/v1/media/upload-url", {"kind": "avatar", "content_type": "image/png"},
+                           token=a["access_token"])
+    up = (body or {}).get("data") or {}
+    ok_put = False
+    if status == 200:
+        req = urllib.request.Request(up["upload_url"], data=b"\x89PNG\r\n" + b"0" * 256, method="PUT",
+                                     headers={"Content-Type": "image/png"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            ok_put = r.status == 200
+    status, _, body = call("POST", f"{GATEWAY}/v1/media/{up.get('media_id')}/confirm", token=a["access_token"])
+    status2, _, body2 = call("PATCH", f"{GATEWAY}/v1/me", {"avatar_url": up.get("file_url")}, token=a["access_token"])
+    try:
+        with urllib.request.urlopen(up.get("file_url", "http://invalid"), timeout=5) as r:
+            served = r.status == 200
+    except Exception:
+        served = False
+    check("avatar: presigned upload -> confirm -> set -> publicly served",
+          ok_put and status == 200 and status2 == 200 and served, (body, body2))
+
+    call("GET", f"{GATEWAY}/v1/me", token=b["access_token"])
+    status, _, body = call("POST", f"{GATEWAY}/v1/users/{a['user_id']}/follow", token=b["access_token"])
+    check("bob follows alice (social-service)", status == 200, body)
+    followers_seen = False
+    for _ in range(40):  # counters are projected from social.followed events (eventual, < 2 s)
+        _, _, body = call("GET", f"{GATEWAY}/v1/me", token=a["access_token"])
+        if ((body or {}).get("data") or {}).get("stats", {}).get("followers") == 1:
+            followers_seen = True
+            break
+        time.sleep(0.25)
+    check("alice's follower count updated via events", followers_seen, body)
+    status, _, body = call("GET", f"{GATEWAY}/v1/users/{a['user_id']}", token=b["access_token"])
+    check("alice's public profile shows is_following=true for bob",
+          status == 200 and body["data"]["is_following"] is True and "dob" not in body["data"], body)
+    listed = False
+    for _ in range(40):  # follower names come from social-service's user projection (eventual, < 2 s)
+        status, _, body = call("GET", f"{GATEWAY}/v1/users/{a['user_id']}/followers", token=b["access_token"])
+        if status == 200 and [u["id"] for u in body["data"]["items"]] == [b["user_id"]]:
+            listed = True
+            break
+        time.sleep(0.25)
+    check("followers list", listed, body)
+    status, _, body = call("GET", f"{GATEWAY}/v1/users/me", token=a["access_token"])
+    check("legacy GET /v1/users/me still works for the current app",
+          status == 200 and body["data"]["profile"]["full_name"] == "Alice Traveller", body)
 
     print("OTP brute force")
     call("POST", f"{GATEWAY}/v1/auth/email/send", {"email": carol})
@@ -151,7 +213,7 @@ def main() -> int:
 
     print("events")
     time.sleep(1)
-    for q in ("user-service.user.registered.dlq", "notification.email.dlq"):
+    for q in ("user-service.dlq", "social-service.dlq", "journey-service.dlq", "notification.email.dlq"):
         depth = queue_depth(q)
         check(f"{q} is empty", depth == 0, depth)
 

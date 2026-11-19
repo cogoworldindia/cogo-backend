@@ -16,3 +16,9 @@
 [submodule "services/notification"]
 	path = services/notification
 	url = git@github.com:cogoworldindia/notification-service.git
+[submodule "services/journey"]
+	path = services/journey
+	url = git@github.com:cogoworldindia/journey-service.git
+[submodule "services/social"]
+	path = services/social
+	url = git@github.com:cogoworldindia/social-service.git

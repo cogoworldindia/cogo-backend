@@ -1,0 +1,26 @@
+{
+  "description": "auth-service -> `user.registered`. Deliberately carries no PII.",
+  "properties": {
+    "provider": {
+      "title": "Provider",
+      "type": "string"
+    },
+    "registered_at": {
+      "format": "date-time",
+      "title": "Registered At",
+      "type": "string"
+    },
+    "user_id": {
+      "format": "uuid",
+      "title": "User Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "user_id",
+    "provider",
+    "registered_at"
+  ],
+  "title": "UserRegistered",
+  "type": "object"
+}

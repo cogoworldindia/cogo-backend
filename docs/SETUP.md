@@ -45,8 +45,9 @@ If you already cloned without `--recursive`, run `git submodule update --init --
 | RabbitMQ UI | http://localhost:15672 | User `cogo`, password `RABBITMQ_PASSWORD` in `.env.secrets` |
 | Postgres | `localhost:5433` | Superuser `postgres` / `POSTGRES_PASSWORD`. Port 5433 avoids clashing with a host Postgres on 5432 |
 | Redis | `localhost:6380` | For running services natively |
+| Media store (RustFS) | http://localhost:9000 | S3-compatible; presigned uploads go here in dev |
 | RabbitMQ AMQP | `localhost:5672` | For running services natively |
-| auth-, user-, notification-service | not published | Reach them through the gateway, or with `docker compose exec` |
+| auth-, user-, journey-, social-, notification-service | not published | Reach them through the gateway, or with `docker compose exec` |
 
 All ports bind to `127.0.0.1` only.
 

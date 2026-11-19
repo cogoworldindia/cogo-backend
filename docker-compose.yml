@@ -208,6 +208,7 @@ services:
       GOOGLE_PLACES_API_KEY: ${GOOGLE_PLACES_API_KEY:-}
       SOCIAL_SERVICE_URL: http://social-service:8000
       CURSOR_SECRET: ${CURSOR_SECRET:?run make secrets}
+      PUBLIC_WEB_BASE_URL: ${PUBLIC_WEB_BASE_URL:-http://localhost:8000}
     secrets: [{ source: journey_service_key, target: service_key }]
     volumes: [*service-keys]
     depends_on:
@@ -242,10 +243,12 @@ services:
       JWT_ISSUER: ${JWT_ISSUER:-cogo-auth}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-cogo-api}
       CURSOR_SECRET: ${CURSOR_SECRET:?run make secrets}
+      REDIS_URL: redis://redis:6379/5
     secrets: [{ source: social_service_key, target: service_key }]
     volumes: [*service-keys]
     depends_on:
       social-migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
       auth-service: { condition: service_healthy }
 

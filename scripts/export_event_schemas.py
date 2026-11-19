@@ -21,6 +21,12 @@ EVENTS = {
     K.JOURNEY_DELETED: c.JourneySummary,
     K.JOURNEY_STATUS_CHANGED: c.JourneySummary,
     K.JOURNEY_REMINDER_DUE: c.JourneyReminderDue,
+    K.JOURNEY_LIKED: c.JourneyEngagement,
+    K.JOURNEY_COMMENTED: c.JourneyEngagement,
+    K.SOCIAL_USER_BLOCKED: c.UserBlocked,
+    K.SOCIAL_USER_UNBLOCKED: c.UserBlocked,
+    K.SAFETY_CONTENT_HIDDEN: c.ContentModeration,
+    K.SAFETY_CONTENT_UNHIDDEN: c.ContentModeration,
 }
 
 out = Path(sys.argv[1])

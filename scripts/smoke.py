@@ -228,6 +228,58 @@ def main() -> int:
     status2, _, _ = call("GET", f"{GATEWAY}/v1/journeys/{journey.get('id')}", token=b["access_token"])
     check("host deletes; journey disappears", status == 200 and status2 == 404, (status, status2))
 
+    print("feed, engagement, safety (M3)")
+    hampi = "mock:hampi-karnataka"
+    status, _, body = call("POST", f"{GATEWAY}/v1/journeys", {**journey_body, "destination_place_id": hampi}, token=b["access_token"])
+    bob_journey = ((body or {}).get("data") or {}).get("id")
+    check("bob posts a journey to Hampi", status == 201, body)
+
+    def alice_feed_has_bob() -> bool:
+        _, _, fb = call("GET", f"{GATEWAY}/v1/feed?to_place_id={hampi}", token=a["access_token"])
+        return bob_journey in [i["journey"]["id"] for i in ((fb or {}).get("data") or {}).get("items", [])]
+
+    check("bob's journey is in alice's feed (filtered by destination)", alice_feed_has_bob())
+    status, _, body = call("POST", f"{GATEWAY}/v1/journeys/{bob_journey}/like", token=a["access_token"])
+    check("alice likes it", status == 200 and body["data"] == {"liked": True, "likes": 1}, body)
+    status, _, body = call("POST", f"{GATEWAY}/v1/journeys/{bob_journey}/comments", {"body": "Count me in!"}, token=a["access_token"])
+    status2, _, body2 = call("GET", f"{GATEWAY}/v1/journeys/{bob_journey}/comments", token=b["access_token"])
+    check("alice comments; bob sees it", status == 201 and [c["body"] for c in body2["data"]["items"]] == ["Count me in!"], (body, body2))
+    status, _, body = call("POST", f"{GATEWAY}/v1/journeys/{bob_journey}/share", {"channel": "whatsapp"}, token=a["access_token"])
+    share_url = ((body or {}).get("data") or {}).get("url", "")
+    try:
+        with urllib.request.urlopen(f"{GATEWAY}/j/{bob_journey}", timeout=5) as r:
+            page = r.read().decode()
+            public_ok = r.status == 200 and "Hampi" in page and "og:title" in page
+    except Exception:
+        public_ok = False
+    check("share link + public preview page (no token)", share_url.endswith(f"/j/{bob_journey}") and public_ok, body)
+
+    status, _, body = call("POST", f"{GATEWAY}/v1/users/{b['user_id']}/block", token=a["access_token"])
+    check("alice blocks bob", status == 200 and body["data"] == {"blocked": True}, body)
+    hidden = profile_gone = False
+    for _ in range(40):  # block reaches journey- and user-service projections via events (< 2 s)
+        s1, _, _ = call("GET", f"{GATEWAY}/v1/journeys/{bob_journey}", token=a["access_token"])
+        s2, _, bp = call("GET", f"{GATEWAY}/v1/users/{b['user_id']}", token=a["access_token"])
+        hidden, profile_gone = s1 == 404 and not alice_feed_has_bob(), s2 == 404 and bp["error"]["type"] == "profile_unavailable"
+        if hidden and profile_gone:
+            break
+        time.sleep(0.25)
+    check("after the block: bob's journey and profile are gone for alice", hidden and profile_gone)
+    status, _, body = call("POST", f"{GATEWAY}/v1/users/{a['user_id']}/follow", token=b["access_token"])
+    check("bob can't follow alice while blocked", status == 403 and body["error"]["type"] == "blocked", body)
+    call("DELETE", f"{GATEWAY}/v1/users/{b['user_id']}/block", token=a["access_token"])
+    restored = False
+    for _ in range(40):
+        if call("GET", f"{GATEWAY}/v1/journeys/{bob_journey}", token=a["access_token"])[0] == 200:
+            restored = True
+            break
+        time.sleep(0.25)
+    check("unblock restores visibility", restored)
+    report = {"target_type": "journey", "target_id": bob_journey, "reason": "spam"}
+    s1, _, _ = call("POST", f"{GATEWAY}/v1/reports", report, token=a["access_token"])
+    s2, _, b2 = call("POST", f"{GATEWAY}/v1/reports", report, token=a["access_token"])
+    check("report once; duplicate rejected", s1 == 201 and s2 == 409 and b2["error"]["type"] == "already_reported", (s1, s2))
+
     print("OTP brute force")
     call("POST", f"{GATEWAY}/v1/auth/email/send", {"email": carol})
     real = otp_for(carol)

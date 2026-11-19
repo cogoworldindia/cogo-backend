@@ -43,6 +43,8 @@ rule: **match what exists** unless the spec's version is needed for a feature.
 | D16 | `users.city_location geography` in user-service | — | user-service stores `city_lat`/`city_lng` floats. It never runs spatial queries, and PostGIS isn't a trusted extension (it needs superuser). journey-service projects the city into a geography column. |
 | D17 | Separate `user-worker` / `*-worker` deployables | Consumers run inside each API process | Consumers live in the API process (same image) for now. Splitting them into worker deployables is a deployment change (same code, different command), planned with KEDA in M8. |
 | D18 | S3/GCS + MinIO for dev media | MinIO stopped publishing images (2025) | Dev uses **RustFS** (S3-compatible, Apache-2.0) at `localhost:9000`. The code is plain S3 (boto3 presigned PUT), so production uses S3/GCS + CDN unchanged. |
+| D20 | `block_projection (blocker, blocked, source_version)` | — | Adds `active`: an unblock keeps a **tombstone** with its version, so a stale block event can't resurrect a lifted block. |
+| D21 | Vibe Match "computed in SQL" | — | SQL functions `cogo_vibe`, `cogo_tag_sim`, `cogo_falloff` (journey-service migration 0003) are used for feed ranking. A test proves they equal `cogo_common.scoring`, so ranking and the displayed numbers agree. |
 | D19 | Event `trace` field | — | Trace context and the request id travel as AMQP headers set by the outbox (see D5). |
 
 ## 3. Open questions (spec §14): defaults implemented
@@ -85,7 +87,7 @@ Follows spec §13, in order. Each milestone ends with migrations, OpenAPI and ev
 | M0 | `cogo-common`: service tokens, internal client + breaker, app config, cursors, scoring, rate limits, idempotent consumer, versioned projections, per-service queues + dispatcher, broker start with retries. `contracts/` + generators (`make contracts`). Service keys in `make secrets`. **Done.** |
 | M1 | user-service single-table migration, `/v1/me`, personality tags, covers, media upload (RustFS in dev), `user.*` events. social-service follows → counters. Places proxy (journey-service, mock + Google providers). **Done.** |
 | M2 | journey-service: journeys CRUD, `journey.*` events, projections, `/me/journeys`, scheduler. user-service `journeys_count`. **Done.** |
-| M3 | Feed + filters + engagement; social blocks and reports; batch relation endpoints |
+| M3 | Feed (ranked, filtered, stable cursors) + likes/comments/shares/hides + `/j/{id}` preview and app links; social blocks, reports, auto-hide; block and moderation consumers in journey- and user-service. **Done.** Deferred: cover/avatar moderation targets in user-service (M7, with image moderation); `connection_status` in DTOs (needs chat-service, M5). |
 | M4 | matching-worker |
 | M5 | chat-service + chat-ws; notification-service device tokens, prefs, FCM (mock) |
 | M6 | eKYC |

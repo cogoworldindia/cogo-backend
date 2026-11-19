@@ -19,8 +19,8 @@ versions and holds the local stack.
 | `services/api-gateway` | `api-gateway` | Public edge: route allowlist, edge JWT check, Redis rate limits, streaming proxy |
 | `services/auth` | `auth-service` | Identity: email OTP, Google (Firebase) sign-in, account linking, EdDSA access tokens + JWKS, rotating refresh sessions |
 | `services/user` | `user-service` | Profiles, tags, covers, media uploads; emits `user.*`; consumes `user.registered`, `social.*followed` |
-| `services/journey` | `journey-service` | Places proxy (M1); journeys, feed and matching arrive in M2–M4 |
-| `services/social` | `social-service` | Follows (M1); blocks, reports and moderation arrive in M3 |
+| `services/journey` | `journey-service` | Journeys, home feed, engagement, share pages, Places proxy; matching arrives in M4 |
+| `services/social` | `social-service` | Follows, blocks, reports, auto-hide moderation |
 | `services/notification` | `notification-service` | Queue-driven email worker (no HTTP send API) |
 | `services/mail` | `mail-service` | **Retired** (Java/Gmail). Not started by compose; kept only until its unpushed commit is dealt with |
 

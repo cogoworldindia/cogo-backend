@@ -280,6 +280,48 @@ def main() -> int:
     s2, _, b2 = call("POST", f"{GATEWAY}/v1/reports", report, token=a["access_token"])
     check("report once; duplicate rejected", s1 == 201 and s2 == 409 and b2["error"]["type"] == "already_reported", (s1, s2))
 
+    print("matching (M4)")
+    trip = {**journey_body, "origin_place_id": "mock:pune-maharashtra", "destination_place_id": "mock:panaji-goa"}
+    status, _, body = call("POST", f"{GATEWAY}/v1/journeys", trip, token=a["access_token"])
+    a_trip = ((body or {}).get("data") or {}).get("id")
+    status2, _, body2 = call("POST", f"{GATEWAY}/v1/journeys", {**trip, "destination_place_id": "mock:calangute-goa"},
+                             token=b["access_token"])
+    b_trip = ((body2 or {}).get("data") or {}).get("id")
+    check("alice (Pune -> Panaji) and bob (Pune -> Calangute) post trips", status == 201 and status2 == 201, (body, body2))
+
+    def a_matches() -> list[dict[str, Any]]:
+        _, _, mb = call("GET", f"{GATEWAY}/v1/journeys/{a_trip}/matches", token=a["access_token"])
+        return list(((mb or {}).get("data") or {}).get("items", []))
+
+    def a_banner() -> dict[str, Any]:
+        _, _, jb = call("GET", f"{GATEWAY}/v1/journeys/{a_trip}", token=a["access_token"])
+        return dict(((jb or {}).get("data") or {}).get("matches") or {})
+
+    matched: dict[str, Any] | None = None
+    for _ in range(40):  # journey.created -> matching worker -> journey_matches (< 2 s)
+        matched = next((m for m in a_matches() if m["id"] == b_trip), None)
+        if matched and a_banner().get("state") == "done":
+            break
+        time.sleep(0.25)
+    check("bob's trip is in alice's matches with a Journey Match score",
+          matched is not None and isinstance(matched.get("journey_match"), int) and matched["journey_match"] >= 50, matched)
+    banner = a_banner()
+    check("alice's banner: done, with a count and best score",
+          banner.get("state") == "done" and banner.get("count", 0) >= 1
+          and (banner.get("best_score") or 0) >= ((matched or {}).get("journey_match") or 101), banner)
+    status, _, body = call("GET", f"{GATEWAY}/v1/journeys/{a_trip}/matches", token=b["access_token"])
+    check("only the host can list a journey's matches", status == 403 and body["error"]["type"] == "not_owner", body)
+    before = banner.get("count", 0)
+    call("DELETE", f"{GATEWAY}/v1/journeys/{b_trip}", token=b["access_token"])
+    purged = False
+    for _ in range(40):  # journey.deleted -> worker purges both directions and recounts
+        if b_trip not in [m["id"] for m in a_matches()] and a_banner().get("count") == before - 1:
+            purged = True
+            break
+        time.sleep(0.25)
+    check("bob deletes his trip: it leaves alice's matches and banner", purged, a_banner())
+    call("DELETE", f"{GATEWAY}/v1/journeys/{a_trip}", token=a["access_token"])
+
     print("OTP brute force")
     call("POST", f"{GATEWAY}/v1/auth/email/send", {"email": carol})
     real = otp_for(carol)

@@ -19,7 +19,7 @@ versions and holds the local stack.
 | `services/api-gateway` | `api-gateway` | Public edge: route allowlist, edge JWT check, Redis rate limits, streaming proxy |
 | `services/auth` | `auth-service` | Identity: email OTP, Google (Firebase) sign-in, account linking, EdDSA access tokens + JWKS, rotating refresh sessions |
 | `services/user` | `user-service` | Profiles, tags, covers, media uploads; emits `user.*`; consumes `user.registered`, `social.*followed` |
-| `services/journey` | `journey-service` | Journeys, home feed, engagement, share pages, Places proxy; matching arrives in M4 |
+| `services/journey` | `journey-service` | Journeys, home feed, engagement, share pages, Places proxy, matching worker + Matches list |
 | `services/social` | `social-service` | Follows, blocks, reports, auto-hide moderation |
 | `services/notification` | `notification-service` | Queue-driven email worker (no HTTP send API) |
 | `services/mail` | `mail-service` | **Retired** (Java/Gmail). Not started by compose; kept only until its unpushed commit is dealt with |
@@ -34,6 +34,8 @@ Phase 1 progress and every difference from the build spec are tracked in [docs/R
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, flows (sequence diagrams), data ownership, messaging, security, scalability, Phase 3 |
 | [docs/architecture.svg](docs/architecture.svg) ([png](docs/architecture.png)) | Architecture diagram |
 | [docs/api/CoGo-API-Reference.xlsx](docs/api/CoGo-API-Reference.xlsx) | API reference per service: routes, endpoints, schemas, events, error codes |
+| [docs/perf/matching.md](docs/perf/matching.md) | Matching load check at 100k journeys, with the candidate query plan |
+| `contracts/openapi/`, `contracts/events/` | Generated API and event contracts for every service (`make contracts`) |
 
 ## Quick start
 
@@ -124,6 +126,7 @@ through a named Docker build context in compose (`additional_contexts: common`).
 
 ## Roadmap
 
-The audit and the phased plan (trip-service with PostGIS, H3-based route matching,
-connections, media, chat, production platform) are in the planning notes for this refactor. The
-next services follow the same template as user-service.
+Phase 1 follows the build spec's milestones (M0–M8). M0–M4 are done: platform foundations,
+profiles and follows, journeys, feed and safety, and matching. Next are chat and push
+notifications (M5), eKYC (M6), admin and moderation (M7) and hardening (M8). The plan and its
+status are in [docs/RECON.md](docs/RECON.md) §5.

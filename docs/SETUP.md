@@ -164,8 +164,17 @@ cd services/auth && uv run pytest -q -k refresh    # one project, filtered
 | services/user | IDOR impossibility, public projection, PATCH semantics/validation, idempotent event consumption, DLQ for poison messages |
 | services/notification | Template escaping, dedupe, expiry, retry vs dead-letter, real SMTP delivery to Mailpit |
 | services/api-gateway | Route allowlist, raw-path traversal, per-IP/per-user limits, body caps, upstream failure mapping, CORS, header hygiene |
+| services/journey | Journey rules and lifecycle, feed ranking and filters, engagement, share pages, Places; matching end to end (scores, mutual eligibility, blocks, hides, moderation, push cap, paging, concurrent recomputes, the sweeper) |
+| services/social | Follows, blocks, reports and auto-hide |
 
 The first run downloads container images, so it takes longer.
+
+**Matching load check.** This starts a throwaway PostGIS container, seeds 100k journeys, times
+recomputes (serial and with 8 workers) and writes the report with the candidate query plan:
+
+```bash
+cd services/journey && PYTHONPATH=. uv run python scripts/perf_matching.py --journeys 100000 --out ../../docs/perf
+```
 
 ## 9. Working across the repos
 
@@ -232,6 +241,7 @@ verifier, a database, Alembic, an event consumer and tests). Then:
 | `401 invalid_refresh_token` after `make clean` | Sessions lived in Redis, which was wiped (the signing key in `secrets/` is kept). Sign in again |
 | `503 provider_disabled` on `/v1/auth/google` | `FIREBASE_PROJECT_ID` is empty in `.env` |
 | Tests fail with Docker errors | testcontainers needs the Docker socket. Run `docker info`. On rootless or remote Docker, set `DOCKER_HOST` |
+| A Matches banner stays "Finding matches…" | The scheduler sweep re-runs `pending` journeys after a minute. If it persists: `make logs-journey-service` and check the `journey-service.dlq` depth |
 | Start completely fresh | `make clean && make up` (**deletes** local Postgres/Redis/RabbitMQ data) |
 
 ## 12. Before production

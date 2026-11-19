@@ -46,6 +46,11 @@ rule: **match what exists** unless the spec's version is needed for a feature.
 | D20 | `block_projection (blocker, blocked, source_version)` | — | Adds `active`: an unblock keeps a **tombstone** with its version, so a stale block event can't resurrect a lifted block. |
 | D21 | Vibe Match "computed in SQL" | — | SQL functions `cogo_vibe`, `cogo_tag_sim`, `cogo_falloff` (journey-service migration 0003) are used for feed ranking. A test proves they equal `cogo_common.scoring`, so ranking and the displayed numbers agree. |
 | D19 | Event `trace` field | — | Trace context and the request id travel as AMQP headers set by the outbox (see D5). |
+| D22 | Matching takes `pg_advisory_xact_lock(hashtext(journey_id))` | — | **Row locks on every affected journey, taken in id order.** Matching A also rewrites partner B's rows and banner counter. A per-journey advisory lock lets two replicas refreshing A and C overwrite B's counter with stale counts (a regression test reproduces the lost update). Ordered row locks serialise exactly the journeys whose rows change, and they can't deadlock. The worker plans once to find the set, locks it, then plans again under the lock. |
+| D23 | `matching-worker` is its own deployable | Consumers run in the API process (D17) | The worker runs in journey-service's consumer, on the same queue as its projections. The inbox (`processed_events`) is keyed by event id, so two queues in one database would collide; one queue also keeps a block's projection update and its match purge in a single transaction. A scheduler sweep re-runs any journey still `pending` after a minute (the safety net for a dead-lettered event). Splitting the worker out later is the D17 change plus a composite inbox key. |
+| D24 | `journey_matches` rows for valid pairs | — | Rows are **directional**: (A, B) exists only if A's host may see B now (B not moderation-hidden, not full, not hidden by A's host). The banner count then equals what the Matches list shows. The list still re-applies these filters at read time, so a row the worker hasn't caught up with yet can't leak. |
+| D25 | Emit `journey.match_found` "for each B whose owner should be told"; 3 per journey per day | — | A new row (X, Y) notifies X's host only when Y is the newcomer: Y was just posted or re-routed (`pending`) and X wasn't, or both were and X is older. The result doesn't depend on which refresh runs first, and unblocks or eligibility changes notify nobody. The daily cap is enforced by the producer (Redis counter per journey per IST day), so the bus doesn't carry pushes that would be dropped. It fails open if Redis is down. |
+| D26 | "Scoring is pure Python over at most a few hundred rows" | — | New config `matching.max_candidates` (default 1000) caps the rows scored per journey, nearest first. New `matching.page_size` (20) for the Matches list. Measured at 100k journeys: [perf/matching.md](perf/matching.md). |
 
 ## 3. Open questions (spec §14): defaults implemented
 
@@ -88,7 +93,7 @@ Follows spec §13, in order. Each milestone ends with migrations, OpenAPI and ev
 | M1 | user-service single-table migration, `/v1/me`, personality tags, covers, media upload (RustFS in dev), `user.*` events. social-service follows → counters. Places proxy (journey-service, mock + Google providers). **Done.** |
 | M2 | journey-service: journeys CRUD, `journey.*` events, projections, `/me/journeys`, scheduler. user-service `journeys_count`. **Done.** |
 | M3 | Feed (ranked, filtered, stable cursors) + likes/comments/shares/hides + `/j/{id}` preview and app links; social blocks, reports, auto-hide; block and moderation consumers in journey- and user-service. **Done.** Deferred: cover/avatar moderation targets in user-service (M7, with image moderation); `connection_status` in DTOs (needs chat-service, M5). |
-| M4 | matching-worker |
+| M4 | Matching worker in journey-service: `journey_matches` (directional), candidate retrieval on both GiST indexes, Python scoring, ordered row locks, banners, `journey.match_found` with a daily cap, a scheduler sweep, `GET /v1/journeys/{id}/matches` with filters and keyset paging, and a load check (`docs/perf/matching.md`). **Done.** Deferred: `GET /internal/journeys/{id}/join-check` (M5, its first caller is chat-service); `seats_taken` from `chat.request_accepted` (M5); the Matches screen itself (mobile, see §4). |
 | M5 | chat-service + chat-ws; notification-service device tokens, prefs, FCM (mock) |
 | M6 | eKYC |
 | M7 | admin-service, moderation, account deletion |
@@ -104,3 +109,14 @@ Follows spec §13, in order. Each milestone ends with migrations, OpenAPI and ev
   - `/readyz` now fails unless every subscriber is consuming.
   - notification-service moved onto the shared FastAPI lifespan.
   - There's a regression test for each part.
+
+- **Events without consumers stuck in the outbox (found and fixed in M4).** The relay published
+  every event as `mandatory`, so RabbitMQ returned events that no queue binds yet. In dev,
+  `journey.liked`, `journey.commented` and `journey.updated` (which had no consumer before M4)
+  were retried until `max_attempts` and never marked published. In production, this would have
+  grown an ever-retrying backlog.
+  - Fix: only routing keys bound in the declared topology are `mandatory`
+    (`cogo_common.events.topology.has_consumers`). A lost binding for a consumed event still
+    fails loudly. Events published ahead of their consumer go out without `mandatory`.
+  - The four stuck dev rows were reset and flushed.
+  - A regression test covers it.

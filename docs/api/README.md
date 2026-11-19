@@ -11,6 +11,11 @@
 - **Error Codes**
 - **Schemas**
 
+The workbook covers the platform core (gateway, auth, user, notification). For journey-service
+and social-service (Phase 1), the authoritative contracts are the generated
+`contracts/openapi/*.json` and `contracts/events/*.json` in the integration repo
+(`make contracts`).
+
 Field-level schemas for auth and user are **generated from each service's OpenAPI spec**, so
 types and constraints match the code. Endpoint notes, examples, errors and rate limits are
 curated in `build_api_xlsx.py`.

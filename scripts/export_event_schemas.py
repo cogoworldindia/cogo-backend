@@ -23,6 +23,7 @@ EVENTS = {
     K.JOURNEY_REMINDER_DUE: c.JourneyReminderDue,
     K.JOURNEY_LIKED: c.JourneyEngagement,
     K.JOURNEY_COMMENTED: c.JourneyEngagement,
+    K.JOURNEY_MATCH_FOUND: c.JourneyMatchFound,
     K.SOCIAL_USER_BLOCKED: c.UserBlocked,
     K.SOCIAL_USER_UNBLOCKED: c.UserBlocked,
     K.SAFETY_CONTENT_HIDDEN: c.ContentModeration,

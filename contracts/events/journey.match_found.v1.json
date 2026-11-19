@@ -1,0 +1,37 @@
+{
+  "description": "journey-service (matching) -> journey.match_found: tell `owner_id` that their\njourney `journey_id` has a new match. Notification rate-limits it (spec \u00a75.4).",
+  "properties": {
+    "dest_name": {
+      "title": "Dest Name",
+      "type": "string"
+    },
+    "journey_id": {
+      "format": "uuid",
+      "title": "Journey Id",
+      "type": "string"
+    },
+    "matched_journey_id": {
+      "format": "uuid",
+      "title": "Matched Journey Id",
+      "type": "string"
+    },
+    "owner_id": {
+      "format": "uuid",
+      "title": "Owner Id",
+      "type": "string"
+    },
+    "score": {
+      "title": "Score",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "owner_id",
+    "journey_id",
+    "matched_journey_id",
+    "score",
+    "dest_name"
+  ],
+  "title": "JourneyMatchFound",
+  "type": "object"
+}

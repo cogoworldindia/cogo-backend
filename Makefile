@@ -1,6 +1,6 @@
 # CoGo backend — local development entry points. `make help` lists targets.
 COMPOSE  := docker compose --env-file .env --env-file .env.secrets
-PY_PROJECTS := libs/common services/auth services/user services/journey services/social services/notification services/api-gateway
+PY_PROJECTS := libs/common services/auth services/user services/journey services/social services/chat services/notification services/api-gateway
 
 .DEFAULT_GOAL := help
 .PHONY: help setup secrets check-docker build up down restart ps logs logs-% migrate obs-up \

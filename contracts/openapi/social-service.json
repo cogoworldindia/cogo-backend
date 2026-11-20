@@ -296,6 +296,11 @@
             "title": "Id",
             "type": "string"
           },
+          "kyc_level": {
+            "default": "none",
+            "title": "Kyc Level",
+            "type": "string"
+          },
           "name": {
             "anyOf": [
               {

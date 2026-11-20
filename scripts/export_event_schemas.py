@@ -13,6 +13,7 @@ EVENTS = {
     K.USER_REGISTERED: c.UserRegistered,
     K.USER_CREATED: c.UserSnapshot,
     K.USER_UPDATED: c.UserSnapshot,
+    K.USER_KYC_LEVEL_CHANGED: c.UserKycLevelChanged,
     K.SOCIAL_FOLLOWED: c.SocialFollowed,
     K.SOCIAL_UNFOLLOWED: c.SocialFollowed,
     K.EMAIL_REQUESTED: c.EmailRequested,

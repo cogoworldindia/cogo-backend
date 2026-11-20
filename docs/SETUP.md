@@ -27,7 +27,8 @@ git clone --recursive git@github.com:cogoworldindia/cogo-backend.git
 cd cogo-backend
 make setup     # submodules + .env + .env.secrets + secrets/jwt_private_key.pem
 make up        # build images, run migrations, start everything, wait until healthy
-make smoke     # 21 end-to-end checks through the gateway
+make smoke     # quick end-to-end checks through the gateway
+make e2e       # the full end-to-end test: every public endpoint, checked against contracts/
 ```
 
 `make setup` is idempotent: it never overwrites a value you already have. On the first `make up`,
@@ -68,7 +69,7 @@ curl -s localhost:8000/v1/users/me -H "Authorization: Bearer $TOKEN"
 | File | Committed? | Contents |
 |---|---|---|
 | `.env` | no (template `.env.example`) | Non-secret settings: log level, DB names, token lifetimes, `FIREBASE_PROJECT_ID`, CORS origins, SMTP host, tracing endpoint |
-| `.env.secrets` | **never** (template `.env.secrets.example`) | Postgres, per-service DB and RabbitMQ passwords, `OTP_HMAC_KEY`, SMTP credentials |
+| `.env.secrets` | **never** (template `.env.secrets.example`) | Postgres, per-service DB and RabbitMQ passwords, `OTP_HMAC_KEY`, `KYC_OTP_HMAC_KEY`, `KYC_MOCK_WEBHOOK_SECRET`, SMTP credentials. `make up` generates any missing value |
 | `secrets/jwt_private_key.pem` | **never** | Ed25519 key that signs access tokens. Mounted only into auth-service |
 
 The Makefile passes both env files to Compose
@@ -85,10 +86,32 @@ Settings you are most likely to change:
 | `LOG_JSON` | `true` | Set `false` for human-readable local logs |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | empty | Set `http://jaeger:4318` and run `make obs-up` to collect traces |
 | `PLACES_PROVIDER` | `mock` | `google` uses Places API (New); set `GOOGLE_PLACES_API_KEY` in `.env.secrets` |
+| `KYC_PROVIDER` | `mock` | `mock` serves a test ID page where you pick the outcome. `cashfree` uses Cashfree Secure ID (DigiLocker); see §12 |
+| `APP_CONFIG_TTL_SECONDS` | `5` in dev (60 in production) | How often services re-read app config (spec §10) from the shared config Redis |
 | `PUSH_PROVIDER` | `mock` | `mock` records pushes (read them at `GET /v1/me/devices/test-pushes`). For `fcm`, mount the Firebase service-account JSON into notification-service and set `FCM_CREDENTIALS_FILE` to its path |
 
 Each service receives only the variables it needs. The `environment:` block of each service in
 `docker-compose.yml` is the definitive list.
+
+**App config** (gates, limits, matching weights: spec §10) has built-in defaults. Until
+admin-service lands (M7), override a key by hand in the shared config Redis (db 7). Services
+pick it up within `APP_CONFIG_TTL_SECONDS`. Nested objects merge, so this changes one gate:
+
+```bash
+docker exec cogo-redis-1 redis-cli -n 7 SET config:kyc '{"gates": {"create_journey": "partial"}}'
+docker exec cogo-redis-1 redis-cli -n 7 DEL config:kyc    # back to the defaults
+```
+
+**Trying eKYC by hand** (set your profile's name and date of birth first):
+
+1. Official email: `POST /v1/me/kyc/email/start {"email": "you@company.example"}`, read the
+   code in Mailpit, then `POST /v1/me/kyc/email/verify {"otp": "123456"}`. Your level becomes
+   `partial`. Personal domains (gmail.com, …) are refused while `kyc.require_official_domain`
+   is on.
+2. Government ID: `POST /v1/me/kyc/gov-id/start {"consent": true}`, open `data.redirect_url`
+   in a browser, and pick an outcome. "ID matches" makes you `full`; "name doesn't match" sends
+   it to review. The page then redirects to `cogo://kyc/return?...`, which a desktop browser
+   can't open; that's expected. Check the result with `GET /v1/me/kyc`.
 
 ## 5. Everyday commands
 
@@ -270,5 +293,15 @@ verifier, a database, Alembic, an event consumer and tests). Then:
 - Point the SMTP settings at a real relay (SES/SendGrid/Postmark) with SPF, DKIM and DMARC on the
   sending domain.
 - Set `ENV=production` (disables docs, enables HSTS) and restrict `CORS_ALLOW_ORIGINS`.
+- eKYC with Cashfree Secure ID (DigiLocker):
+  - Set `KYC_PROVIDER=cashfree` and `KYC_CASHFREE_BASE_URL=https://api.cashfree.com/verification`.
+    Put `KYC_CASHFREE_CLIENT_ID` and `KYC_CASHFREE_CLIENT_SECRET` in the secrets store.
+  - Ask Cashfree to enable DigiLocker on the account (the endpoint returns 404 until they do).
+  - In the Cashfree dashboard, set the webhook to `https://<api host>/v1/webhooks/kyc/cashfree`.
+  - Set `KYC_RETURN_URL` to an https app link, for example `https://cogo.app/kyc/return`.
+    Cashfree refuses custom schemes, and user-service won't start without https.
+  - Production calls need Cashfree's 2FA: either allow-list the egress IPs, or download their
+    public key and set `KYC_CASHFREE_PUBLIC_KEY_FILE`.
+  - Run one sandbox verification end to end first; RECON D38 lists what the docs leave open.
 - Run several replicas per service. Scrape `/metrics` (gateway on `:9100`, which must not be
   public) and ship traces through `OTEL_EXPORTER_OTLP_ENDPOINT`.

@@ -11,10 +11,13 @@ Stdlib only; reuses the smoke test's helpers (HTTP, WebSocket, Mailpit).
 """
 
 import json
+import os
 import re
+import subprocess
 import sys
 import time
 import uuid
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -49,14 +52,48 @@ RESULTS: list[tuple[str, str, bool]] = []
 SECTION = [""]
 
 
-def api(method: str, path: str, body: Any = None, token: str | None = None,
-        headers: dict[str, str] | None = None) -> tuple[int, dict[str, str], Any]:  # fmt: skip
+def track(method: str, path: str) -> None:
     bare = path.split("?", 1)[0]
     for svc, m, template, pattern in OPS:
         if m == method and pattern.match(bare):
             HITS[(svc, f"{m} {template}")] = HITS.get((svc, f"{m} {template}"), 0) + 1
-            break
+            return
+
+
+def api(method: str, path: str, body: Any = None, token: str | None = None,
+        headers: dict[str, str] | None = None) -> tuple[int, dict[str, str], Any]:  # fmt: skip
+    track(method, path)
     return smoke.call(method, GW + path, body, token, headers)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None  # an in-app browser hands cogo:// links to the app; we just read Location
+
+
+def browse(method: str, url: str, form: str | None = None) -> tuple[int, dict[str, str], str]:
+    """What the in-app browser does on the eKYC provider's page (HTML, forms, redirects)."""
+    track(method, url.removeprefix(GW))
+    body = form.encode() if form is not None else None
+    req = urllib.request.Request(url, data=body, method=method)
+    if body is not None:
+        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    try:
+        with urllib.request.build_opener(_NoRedirect).open(req, timeout=10) as r:
+            return r.status, {k.lower(): v for k, v in r.headers.items()}, r.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, {k.lower(): v for k, v in e.headers.items()}, e.read().decode(errors="replace")
+
+
+CONFIG_TTL = float(os.environ.get("APP_CONFIG_TTL_SECONDS", "5"))
+
+
+def set_config(key: str, value: Any) -> bool:
+    """Write (or with None, remove) an app-config override, as admin-service will (M7)."""
+    cmd = ["SET", f"config:{key}", json.dumps(value)] if value is not None else ["DEL", f"config:{key}"]
+    done = subprocess.run(["docker", "exec", "cogo-redis-1", "redis-cli", "-n", "7", *cmd],
+                          capture_output=True, text=True, timeout=10)  # fmt: skip
+    return done.returncode == 0
 
 
 def section(name: str) -> None:
@@ -521,6 +558,109 @@ def scenario() -> int:
     check("Neha reports a journey", (data(api("POST", "/v1/reports", report, neha.token)) or {}).get("status") == "open")
     check("reporting twice -> 409 already_reported", err(api("POST", "/v1/reports", report, neha.token)) == (409, "already_reported"))
     check("reporting yourself -> 400", err(api("POST", "/v1/reports", {"target_type": "user", "target_id": neha.id, "reason": "other"}, neha.token)) == (400, "cannot_report_self"))
+
+    # ------------------------------------------------------------ eKYC
+    section("eKYC (user-service) and what it unlocks")
+    me = data(api("GET", "/v1/me", token=kabir.token)) or {}
+    check("Kabir: the eKYC sheet shows (variant 'none'); name and DOB editable",
+          me.get("kyc_prompt") == {"show": True, "variant": "none"} and me.get("identity_locked") is False, me)
+    snooze = data(api("POST", "/v1/me/kyc/prompt/snooze", token=kabir.token)) or {}
+    check("'Skip for now' hides it for the 3-day cool-down",
+          snooze.get("kyc_prompt", {}).get("show") is False and bool(snooze.get("snoozed_until"))
+          and (data(api("GET", "/v1/me", token=kabir.token)) or {}).get("kyc_prompt", {}).get("show") is False, snooze)  # fmt: skip
+    status = data(api("GET", "/v1/me/kyc", token=kabir.token)) or {}
+    check("GET /v1/me/kyc: no check started yet",
+          status.get("email", {}).get("status") == status.get("gov_id", {}).get("status") == "not_started", status)
+
+    check("a personal email -> 400 email_domain_not_allowed",
+          err(api("POST", "/v1/me/kyc/email/start", {"email": f"asha.{RUN}@gmail.com"}, asha.token)) == (400, "email_domain_not_allowed"))
+    work = f"asha.rao-{RUN}@studio.example.com"
+    code_status, _, resp = api("POST", "/v1/me/kyc/email/start", {"email": work}, asha.token)
+    check("Asha asks for a code at her work email (202)", code_status == 202 and (data((0, {}, resp)) or {}).get("email") == work, resp)
+    code = smoke.otp_for(work)
+    wrong = "000000" if code != "000000" else "111111"
+    resp = api("POST", "/v1/me/kyc/email/verify", {"otp": wrong}, asha.token)
+    check("a wrong code -> 400 otp_invalid, with attempts left",
+          err(resp) == (400, "otp_invalid") and resp[2]["error"].get("details") == {"attempts_left": 4}, resp[2])
+    status = data(api("POST", "/v1/me/kyc/email/verify", {"otp": code}, asha.token)) or {}
+    check("the emailed code verifies it: level partial, the sheet now asks for an ID",
+          status.get("kyc_level") == "partial" and status.get("kyc_prompt") == {"show": True, "variant": "partial_need_id"}, status)
+
+    check("an ID check needs the consent screen -> 422", api("POST", "/v1/me/kyc/gov-id/start", {}, asha.token)[0] == 422)
+    started = data(api("POST", "/v1/me/kyc/gov-id/start", {"consent": True}, asha.token)) or {}
+    page_url = started.get("redirect_url", "")
+    check("Asha starts the ID check: a provider page to open", page_url.startswith(f"{GW}/v1/kyc/mock/"), started)
+    check("...status is pending meanwhile",
+          (data(api("GET", "/v1/me/kyc", token=asha.token)) or {}).get("gov_id", {}).get("status") == "pending")
+    page_status, _, page = browse("GET", page_url)
+    check("the provider page opens (mock provider, through the gateway)", page_status == 200 and 'value="verified"' in page, page[:200])
+    sig = page_url.split("sig=", 1)[-1]
+    done_status, headers, _ = browse("POST", page_url.split("?", 1)[0], f"sig={sig}&outcome=verified")
+    check("finishing it sends the browser back to the app's deep link",
+          done_status == 303 and headers.get("location") == f"cogo://kyc/return?attempt_id={started.get('attempt_id')}", headers)
+    status = eventually(lambda: (s := data(api("GET", "/v1/me/kyc", token=asha.token)) or {})
+                        and s["gov_id"]["status"] != "pending" and s, timeout=60) or {}  # fmt: skip
+    check("the app polls /v1/me/kyc: verified, level full, prompt gone, identity locked",
+          status.get("gov_id", {}).get("status") == "verified" and status.get("kyc_level") == "full"
+          and status.get("kyc_prompt", {}).get("show") is False and status.get("identity_locked") is True
+          and len(status.get("gov_id", {}).get("last4") or "") == 4, status)  # fmt: skip
+    check("a verified name can't change -> 403 identity_locked",
+          err(api("PATCH", "/v1/me", {"name": "Not Asha"}, asha.token)) == (403, "identity_locked"))
+    check("a second ID check -> 409 already_verified",
+          err(api("POST", "/v1/me/kyc/gov-id/start", {"consent": True}, asha.token)) == (409, "already_verified"))
+
+    review = data(api("POST", "/v1/me/kyc/gov-id/start", {"consent": True}, neha.token)) or {}
+    review_url = review.get("redirect_url", "")
+    browse("POST", review_url.split("?", 1)[0], f"sig={review_url.split('sig=', 1)[-1]}&outcome=mismatch")
+    status = data(api("GET", "/v1/me/kyc", token=neha.token)) or {}
+    check("Neha's ID name doesn't match her profile: under review, level unchanged, no prompt, locked",
+          status.get("gov_id", {}).get("status") == "review" and status.get("kyc_level") == "none"
+          and status.get("kyc_prompt", {}).get("show") is False and status.get("identity_locked") is True, status)  # fmt: skip
+    check("...and no new ID check until it's reviewed -> 409 kyc_review_pending",
+          err(api("POST", "/v1/me/kyc/gov-id/start", {"consent": True}, neha.token)) == (409, "kyc_review_pending"))
+    check("a forged provider callback -> 401 invalid_signature",
+          err(api("POST", "/v1/webhooks/kyc/mock", {"ref": "mock_x", "status": "success"},
+                  headers={"x-mock-signature": "0" * 64})) == (401, "invalid_signature"))  # fmt: skip
+
+    api("POST", f"/v1/users/{asha.id}/follow", token=kabir.token)
+    check("Asha's verified badge: on her profile", (data(api("GET", f"/v1/users/{asha.id}", token=kabir.token)) or {}).get("kyc_level") == "full")
+    check("...on her journey card (journey-service, via user.kyc_level_changed)",
+          bool(eventually(lambda: (data(api("GET", f"/v1/journeys/{a_j}", token=kabir.token)) or {}).get("host", {}).get("kyc_level") == "full")))
+    check("...and in follower lists (social-service)",
+          bool(eventually(lambda: any(u["id"] == asha.id and u.get("kyc_level") == "full"
+                                      for u in (data(api("GET", f"/v1/users/{kabir.id}/following", token=kabir.token)) or {}).get("items", [])))))  # fmt: skip
+    resp = api("POST", "/v1/journeys", journey_body(NOIDA, RISHIKESH, start + timedelta(hours=2), who_can_join="verified_only"), kabir.token)
+    kabir.journeys["verified"] = kv_j = (data(resp) or {}).get("id", "")
+    check("Kabir posts a verified-only trip", resp[0] == 201, resp[2])
+    check("Asha (verified) matches it...", bool(eventually(lambda: kv_j in match_ids(asha, a_j))))
+    check("...Ravi (unverified) doesn't", kv_j not in match_ids(ravi, r_j))
+    check("...and can't ask to join it -> 403 not_eligible",
+          err(api("POST", "/v1/connection-requests", {"target_journey_id": kv_j, "message": "hi"}, ravi.token)) == (403, "not_eligible"))
+
+    # spec §13 M6: "a gate change in config takes effect without a deploy"
+    gates = {"gates": {"create_journey": "partial", "send_connection_request": "full"}}
+    check("admin tightens the KYC gates (config:kyc in the shared config Redis)", set_config("kyc", gates))
+    try:
+        print(f"  ....  waiting {CONFIG_TTL + 1:.0f}s for every service to re-read config (APP_CONFIG_TTL_SECONDS)")
+        time.sleep(CONFIG_TTL + 1)
+        resp = api("POST", "/v1/journeys", journey_body(DELHI, HARIDWAR, start), ravi.token)
+        check("Ravi (none) can't post a journey -> 403 kyc_required (required_level partial)",
+              err(resp) == (403, "kyc_required") and resp[2]["error"].get("details") == {"required_level": "partial"}, resp[2])
+        resp = api("POST", "/v1/connection-requests", {"target_journey_id": k_j, "message": "hi"}, ravi.token)
+        check("...nor send a request -> 403 kyc_required (required_level full, chat-service)",
+              err(resp) == (403, "kyc_required") and resp[2]["error"].get("details") == {"required_level": "full"}, resp[2])
+        resp = api("POST", "/v1/journeys", journey_body(DELHI, HARIDWAR, start), asha.token)
+        asha.journeys["gated"] = (data(resp) or {}).get("id", "")
+        check("Asha (full) still can", resp[0] == 201, resp[2])
+        resp = api("POST", "/v1/connection-requests", {"target_journey_id": k_j, "message": "Room for me?"}, asha.token)
+        check("...and can ask to join Kabir's trip", resp[0] == 201, resp[2])
+        api("POST", f"/v1/connection-requests/{(data(resp) or {}).get('id')}/withdraw", token=asha.token)
+    finally:
+        set_config("kyc", None)
+    time.sleep(CONFIG_TTL + 1)
+    resp = api("POST", "/v1/journeys", journey_body(DELHI, HARIDWAR, start), ravi.token)
+    ravi.journeys["after_gate"] = (data(resp) or {}).get("id", "")
+    check("gates reopened (override removed): Ravi can post again", resp[0] == 201, resp[2])
 
     # ------------------------------------------------------------ sessions
     section("Sessions (auth-service)")

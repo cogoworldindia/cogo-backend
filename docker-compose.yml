@@ -15,6 +15,10 @@ x-common-env: &common-env
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   LOG_JSON: ${LOG_JSON:-true}
   OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  # App config (spec §10): one Redis every service reads (admin-service writes it in M7).
+  # Dev re-reads every 5 s so a change shows quickly; the production default is 60 s.
+  CONFIG_REDIS_URL: redis://redis:6379/7
+  APP_CONFIG_TTL_SECONDS: ${APP_CONFIG_TTL_SECONDS:-5}
 
 x-auth-db-url: &auth-db-url postgresql+asyncpg://${AUTH_DB_USER:-auth_svc}:${AUTH_DB_PASSWORD:?run make secrets}@postgres:5432/${AUTH_DB:-authdb}
 x-user-db-url: &user-db-url postgresql+asyncpg://${USER_DB_USER:-user_svc}:${USER_DB_PASSWORD:?run make secrets}@postgres:5432/${USER_DB:-userdb}
@@ -180,11 +184,20 @@ services:
       MEDIA_ACCESS_KEY: ${MEDIA_ACCESS_KEY:?run make secrets}
       MEDIA_SECRET_KEY: ${MEDIA_SECRET_KEY:?run make secrets}
       MEDIA_DEV_BOOTSTRAP: "true"
+      # eKYC (spec §5.9). Dev uses the mock provider: its page is served through the gateway
+      # and it calls the real webhook, also through the gateway.
+      KYC_PROVIDER: ${KYC_PROVIDER:-mock}
+      KYC_OTP_HMAC_KEY: ${KYC_OTP_HMAC_KEY:?run make secrets}
+      KYC_MOCK_WEBHOOK_SECRET: ${KYC_MOCK_WEBHOOK_SECRET:?run make secrets}
+      KYC_PUBLIC_BASE_URL: ${KYC_PUBLIC_BASE_URL:-http://localhost:8000}
+      KYC_MOCK_WEBHOOK_URL: http://api-gateway:8000/v1/webhooks/kyc/mock
+      KYC_RETURN_URL: ${KYC_RETURN_URL:-cogo://kyc/return}
     secrets: [{ source: user_service_key, target: service_key }]
     volumes: [*service-keys]
     depends_on:
       user-migrate: { condition: service_completed_successfully }
       rabbitmq: { condition: service_healthy }
+      redis: { condition: service_healthy }
       auth-service: { condition: service_healthy }
       media-store: { condition: service_healthy }
 
@@ -253,7 +266,6 @@ services:
       JWT_ISSUER: ${JWT_ISSUER:-cogo-auth}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-cogo-api}
       CURSOR_SECRET: ${CURSOR_SECRET:?run make secrets}
-      REDIS_URL: redis://redis:6379/5
     secrets: [{ source: social_service_key, target: service_key }]
     volumes: [*service-keys]
     depends_on:

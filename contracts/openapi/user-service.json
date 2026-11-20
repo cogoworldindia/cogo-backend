@@ -77,6 +77,152 @@
         "title": "CoverOut",
         "type": "object"
       },
+      "EmailStartIn": {
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "format": "email",
+            "maxLength": 254,
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "EmailStartIn",
+        "type": "object"
+      },
+      "EmailStartOut": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "expires_at"
+        ],
+        "title": "EmailStartOut",
+        "type": "object"
+      },
+      "EmailVerifyIn": {
+        "additionalProperties": false,
+        "properties": {
+          "otp": {
+            "pattern": "^\\d{6}$",
+            "title": "Otp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "otp"
+        ],
+        "title": "EmailVerifyIn",
+        "type": "object"
+      },
+      "Envelope_EmailStartOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/EmailStartOut"
+          },
+          "error": {
+            "title": "Error",
+            "type": "null"
+          },
+          "message": {
+            "default": "OK",
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "const": "success",
+            "default": "success",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "Envelope[EmailStartOut]",
+        "type": "object"
+      },
+      "Envelope_GovIdStartOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/GovIdStartOut"
+          },
+          "error": {
+            "title": "Error",
+            "type": "null"
+          },
+          "message": {
+            "default": "OK",
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "const": "success",
+            "default": "success",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "Envelope[GovIdStartOut]",
+        "type": "object"
+      },
+      "Envelope_KycStatusOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/KycStatusOut"
+          },
+          "error": {
+            "title": "Error",
+            "type": "null"
+          },
+          "message": {
+            "default": "OK",
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "const": "success",
+            "default": "success",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "Envelope[KycStatusOut]",
+        "type": "object"
+      },
       "Envelope_LegacyMeOut_": {
         "properties": {
           "code": {
@@ -238,6 +384,38 @@
         "title": "Envelope[PublicProfileOut]",
         "type": "object"
       },
+      "Envelope_SnoozeOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SnoozeOut"
+          },
+          "error": {
+            "title": "Error",
+            "type": "null"
+          },
+          "message": {
+            "default": "OK",
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "const": "success",
+            "default": "success",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "Envelope[SnoozeOut]",
+        "type": "object"
+      },
       "Envelope_UploadUrlOut_": {
         "properties": {
           "code": {
@@ -268,6 +446,38 @@
           "data"
         ],
         "title": "Envelope[UploadUrlOut]",
+        "type": "object"
+      },
+      "Envelope_WebhookAck_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/WebhookAck"
+          },
+          "error": {
+            "title": "Error",
+            "type": "null"
+          },
+          "message": {
+            "default": "OK",
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "const": "success",
+            "default": "success",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "Envelope[WebhookAck]",
         "type": "object"
       },
       "Envelope_list_CoverOut__": {
@@ -353,6 +563,41 @@
         "title": "Gender",
         "type": "string"
       },
+      "GovIdStartIn": {
+        "additionalProperties": false,
+        "description": "The consent screen (spec \u00a78.1) must be accepted before a provider session starts.",
+        "properties": {
+          "consent": {
+            "const": true,
+            "title": "Consent",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "consent"
+        ],
+        "title": "GovIdStartIn",
+        "type": "object"
+      },
+      "GovIdStartOut": {
+        "properties": {
+          "attempt_id": {
+            "format": "uuid",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "redirect_url": {
+            "title": "Redirect Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempt_id",
+          "redirect_url"
+        ],
+        "title": "GovIdStartOut",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -364,6 +609,146 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "KycEmailOut": {
+        "properties": {
+          "code_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code Expires At"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "pending_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Email"
+          },
+          "status": {
+            "enum": [
+              "not_started",
+              "code_sent",
+              "verified"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verified At"
+          }
+        },
+        "required": [
+          "status",
+          "email",
+          "verified_at",
+          "pending_email",
+          "code_expires_at"
+        ],
+        "title": "KycEmailOut",
+        "type": "object"
+      },
+      "KycGovIdOut": {
+        "properties": {
+          "attempt_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt Id"
+          },
+          "id_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id Type"
+          },
+          "last4": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last4"
+          },
+          "status": {
+            "enum": [
+              "not_started",
+              "pending",
+              "verified",
+              "review",
+              "rejected",
+              "failed",
+              "expired"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verified At"
+          }
+        },
+        "required": [
+          "status",
+          "attempt_id",
+          "id_type",
+          "last4",
+          "verified_at"
+        ],
+        "title": "KycGovIdOut",
         "type": "object"
       },
       "KycPromptOut": {
@@ -387,6 +772,42 @@
           "variant"
         ],
         "title": "KycPromptOut",
+        "type": "object"
+      },
+      "KycStatusOut": {
+        "description": "GET /v1/me/kyc: each check's state, for the eKYC flow (spec \u00a78.1) and its polling.",
+        "properties": {
+          "email": {
+            "$ref": "#/components/schemas/KycEmailOut"
+          },
+          "gov_id": {
+            "$ref": "#/components/schemas/KycGovIdOut"
+          },
+          "identity_locked": {
+            "title": "Identity Locked",
+            "type": "boolean"
+          },
+          "kyc_level": {
+            "enum": [
+              "none",
+              "partial",
+              "full"
+            ],
+            "title": "Kyc Level",
+            "type": "string"
+          },
+          "kyc_prompt": {
+            "$ref": "#/components/schemas/KycPromptOut"
+          }
+        },
+        "required": [
+          "kyc_level",
+          "kyc_prompt",
+          "identity_locked",
+          "email",
+          "gov_id"
+        ],
+        "title": "KycStatusOut",
         "type": "object"
       },
       "LegacyMeOut": {
@@ -780,6 +1201,10 @@
             "title": "Id",
             "type": "string"
           },
+          "identity_locked": {
+            "title": "Identity Locked",
+            "type": "boolean"
+          },
           "kyc_level": {
             "title": "Kyc Level",
             "type": "string"
@@ -847,6 +1272,7 @@
           "stats",
           "kyc_level",
           "kyc_prompt",
+          "identity_locked",
           "guide_seen",
           "account_status",
           "created_at"
@@ -1032,6 +1458,24 @@
         "title": "PublicProfileOut",
         "type": "object"
       },
+      "SnoozeOut": {
+        "properties": {
+          "kyc_prompt": {
+            "$ref": "#/components/schemas/KycPromptOut"
+          },
+          "snoozed_until": {
+            "format": "date-time",
+            "title": "Snoozed Until",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kyc_prompt",
+          "snoozed_until"
+        ],
+        "title": "SnoozeOut",
+        "type": "object"
+      },
       "StatsOut": {
         "properties": {
           "followers": {
@@ -1193,6 +1637,19 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "WebhookAck": {
+        "properties": {
+          "received": {
+            "title": "Received",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "received"
+        ],
+        "title": "WebhookAck",
+        "type": "object"
       }
     }
   },
@@ -1202,6 +1659,92 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/v1/kyc/mock/{ref}": {
+      "get": {
+        "operationId": "mock_page_v1_kyc_mock__ref__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "title": "Ref",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sig",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 128,
+              "title": "Sig",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mock Page",
+        "tags": [
+          "kyc (development mock)"
+        ]
+      },
+      "post": {
+        "operationId": "mock_complete_v1_kyc_mock__ref__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "title": "Ref",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mock Complete",
+        "tags": [
+          "kyc (development mock)"
+        ]
+      }
+    },
     "/v1/me": {
       "get": {
         "operationId": "get_me_v1_me_get",
@@ -1325,6 +1868,171 @@
         "summary": "Guide Seen",
         "tags": [
           "users"
+        ]
+      }
+    },
+    "/v1/me/kyc": {
+      "get": {
+        "operationId": "get_kyc_v1_me_kyc_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_KycStatusOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Kyc",
+        "tags": [
+          "kyc"
+        ]
+      }
+    },
+    "/v1/me/kyc/email/start": {
+      "post": {
+        "operationId": "start_email_v1_me_kyc_email_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailStartIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_EmailStartOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Email",
+        "tags": [
+          "kyc"
+        ]
+      }
+    },
+    "/v1/me/kyc/email/verify": {
+      "post": {
+        "operationId": "verify_email_v1_me_kyc_email_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailVerifyIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_KycStatusOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Email",
+        "tags": [
+          "kyc"
+        ]
+      }
+    },
+    "/v1/me/kyc/gov-id/start": {
+      "post": {
+        "operationId": "start_gov_id_v1_me_kyc_gov_id_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GovIdStartIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_GovIdStartOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Gov Id",
+        "tags": [
+          "kyc"
+        ]
+      }
+    },
+    "/v1/me/kyc/prompt/snooze": {
+      "post": {
+        "operationId": "snooze_prompt_v1_me_kyc_prompt_snooze_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_SnoozeOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Snooze Prompt",
+        "tags": [
+          "kyc"
         ]
       }
     },
@@ -1537,6 +2245,59 @@
         "summary": "Get User",
         "tags": [
           "users"
+        ]
+      }
+    },
+    "/v1/webhooks/kyc/{provider}": {
+      "post": {
+        "description": "Provider callback (no user auth): the signature over the raw body is the auth.\nApplied in this request; repeated deliveries are no-ops (spec \u00a79).",
+        "operationId": "kyc_webhook_v1_webhooks_kyc__provider__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "title": "Provider",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_WebhookAck_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Kyc Webhook",
+        "tags": [
+          "kyc"
         ]
       }
     }

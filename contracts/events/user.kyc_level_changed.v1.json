@@ -1,0 +1,140 @@
+{
+  "$defs": {
+    "CitySnapshot": {
+      "properties": {
+        "lat": {
+          "title": "Lat",
+          "type": "number"
+        },
+        "lng": {
+          "title": "Lng",
+          "type": "number"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "lat",
+        "lng"
+      ],
+      "title": "CitySnapshot",
+      "type": "object"
+    }
+  },
+  "description": "user-service -> `user.kyc_level_changed` (spec \u00a71A.5). The full user snapshot, so a\nprojection applies it exactly like `user.updated` (a full snapshot can't lose an older\nupdate that arrives late), plus the level it moved from. KYC details (email, ID type,\nnumber, provider data) never travel; only the level does (spec \u00a75.9).",
+  "properties": {
+    "account_status": {
+      "default": "active",
+      "title": "Account Status",
+      "type": "string"
+    },
+    "avatar_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Avatar Url"
+    },
+    "city": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CitySnapshot"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "dob": {
+      "anyOf": [
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dob"
+    },
+    "gender": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Gender"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "kyc_level": {
+      "default": "none",
+      "title": "Kyc Level",
+      "type": "string"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Name"
+    },
+    "personality_tag_ids": {
+      "default": [],
+      "items": {
+        "type": "integer"
+      },
+      "title": "Personality Tag Ids",
+      "type": "array"
+    },
+    "previous_kyc_level": {
+      "title": "Previous Kyc Level",
+      "type": "string"
+    },
+    "username": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Username"
+    },
+    "version": {
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version",
+    "previous_kyc_level"
+  ],
+  "title": "UserKycLevelChanged",
+  "type": "object"
+}

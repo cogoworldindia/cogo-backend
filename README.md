@@ -46,7 +46,8 @@ for running tests.
 ```bash
 make setup     # submodules + .env/.env.secrets + Ed25519 signing key (idempotent)
 make up        # build, migrate, start, wait until healthy
-make smoke     # end-to-end check through the gateway
+make smoke     # quick end-to-end check through the gateway
+make e2e       # full end-to-end test: every public endpoint, 4 users (~2 min)
 ```
 
 | URL | What |
@@ -127,7 +128,8 @@ through a named Docker build context in compose (`additional_contexts: common`).
 
 ## Roadmap
 
-Phase 1 follows the build spec's milestones (M0–M8). M0–M5 are done: platform foundations,
-profiles and follows, journeys, feed and safety, matching, and chat with push notifications.
-Next are eKYC (M6), admin and moderation (M7) and hardening (M8). The plan and its
+Phase 1 follows the build spec's milestones (M0–M8). M0–M6 are done: platform foundations,
+profiles and follows, journeys, feed and safety, matching, chat with push notifications, and
+eKYC (official email + government ID, with config-driven gates). Next are admin and moderation
+(M7) and hardening (M8). The plan and its
 status are in [docs/RECON.md](docs/RECON.md) §5.

@@ -18,7 +18,7 @@ patterns.
 |---|---|---|---|
 | **api-gateway** | The only public entry point. It routes an explicit allowlist, checks JWTs at the edge, applies rate limits, streams requests to upstreams and passes `/v1/ws` WebSockets through to chat-ws. | Redis db2 (rate-limit counters) | every service's public API (HTTP), chat-ws (WebSocket); auth JWKS |
 | **auth-service** | Identity: email OTP and Google sign-in, account linking, access tokens, refresh sessions | Postgres `authdb` (accounts, identities, session_audit, outbox); Redis db0 (OTP, sessions) | RabbitMQ (publishes) |
-| **user-service** | User records and profiles, personality tags, cover photos, media uploads, follower and journey counters | Postgres `userdb` (users, personality_tags, user_cover_photos, media_uploads, block_projection, outbox, processed_events) | RabbitMQ (publishes `user.*`; consumes registrations, follows, journey counts, blocks); object storage (presigned uploads); auth JWKS |
+| **user-service** | User records and profiles, personality tags, cover photos, media uploads, follower and journey counters, **eKYC** (official-email OTP, government-ID check, the derived `kyc_level`) | Postgres `userdb` (users, personality_tags, user_cover_photos, media_uploads, kyc_attempts, block_projection, outbox, processed_events) | RabbitMQ (publishes `user.*`, `notification.email.requested`; consumes registrations, follows, journey counts, blocks); object storage (presigned uploads); the KYC provider (Cashfree DigiLocker; a mock in dev); auth JWKS |
 | **journey-service** | Journeys and their lifecycle scheduler, home feed, likes/comments/shares/hides, share pages, Places proxy, and the **matching worker** | Postgres `journeydb` with PostGIS (journeys, journey_matches, engagement tables, user and block projections, outbox, processed_events); Redis db4 (Places cache, scheduler locks, match-push caps) | RabbitMQ (publishes `journey.*`; consumes its own `journey.*`, `user.*`, blocks, moderation); social-service (follow status, internal HTTP); Google Places in production |
 | **social-service** | Follows, blocks, reports and auto-hide moderation | Postgres `socialdb` (follows, blocks, reports, moderation_state, user_projection, outbox, processed_events); Redis db5 | RabbitMQ (publishes `social.*`, `safety.*`; consumes `user.*`) |
 | **chat-service** (`chat-api`) | Connection requests, connections, conversations, messages, receipts, mute, badges | Postgres `chatdb` (connection_requests, connections, conversations, conversation_members, messages, user and block projections, outbox, processed_events); realtime Redis (pub/sub, message rate limits) | RabbitMQ (publishes `chat.*`; consumes `user.*`, blocks, journey lifecycle, moderation); journey-service join-check (internal HTTP) |
@@ -124,7 +124,8 @@ sequenceDiagram
 | Service | Tables / keys | Notes |
 |---|---|---|
 | auth-service | `accounts` (one per person; `id` is the platform user id, UUIDv7), `identities` (UNIQUE provider+subject), `session_audit`, `outbox` | Email OTP and refresh sessions live in Redis db0 under hashed keys, so Redis holds no raw emails or tokens |
-| user-service | `users` (one row per person, profile columns included, `version` for projections), `personality_tags`, `user_cover_photos`, `media_uploads`, `block_projection`, `outbox`, `processed_events` | The user row is created from the event or from the first `GET /me`, whichever comes first |
+| user-service | `users` (one row per person, profile columns included, `version` for projections), `personality_tags`, `user_cover_photos`, `media_uploads`, `kyc_attempts`, `block_projection`, `outbox`, `processed_events` | The user row is created from the event or from the first `GET /me`, whichever comes first. KYC keeps only outcomes: the verified official email, ID type, last 4 digits and match booleans; never documents, full numbers, or the name and DOB on the ID |
+| all services | Shared config Redis (db 7 in dev) `config:<key>` | App config (spec §10), written by admin-service (M7) and read by everyone through `AppConfig` |
 | journey-service | `journeys` (PostGIS points, GiST indexes), `journey_matches` (directional match rows), `journey_likes`, `journey_comments`, `journey_shares`, `hidden_journeys`, `user_projection`, `block_projection`, `outbox`, `processed_events` | Coordinates never leave the service; clients see place names only |
 | social-service | `follows`, `blocks`, `reports`, `moderation_state`, `user_projection`, `outbox`, `processed_events` | Source of truth for blocks; other services keep a versioned `block_projection` |
 | chat-service | `connection_requests` (one pending per pair), `connections` (user_a < user_b), `conversations`, `conversation_members` (read markers, mute, clear, unread count), `messages`, projections, `outbox`, `processed_events` | Request cards snapshot the route and scores at send time; the unmasked request text is admin-only |
@@ -300,10 +301,49 @@ sequenceDiagram
 - **Pushes:** domain events → preferences → presence/mute (chat) → dedupe log → FCM, with
   likes batched per trip.
 
-**Later.** Matching compares endpoints and dates, not route geometry. If product wants "same
+## eKYC (M6)
+
+```mermaid
+sequenceDiagram
+    participant A as App
+    participant GW as api-gateway
+    participant U as user-service
+    participant P as KYC provider (Cashfree DigiLocker / mock)
+    participant MQ as RabbitMQ
+    participant D as journey, chat, social
+    A->>GW: POST /v1/me/kyc/gov-id/start {consent: true}
+    GW->>U: (JWT)
+    U->>U: attempt row (started), then the provider call outside any transaction
+    U->>P: create session (verification_id = attempt id)
+    U-->>A: {attempt_id, redirect_url}
+    A->>P: in-app browser: the user consents in DigiLocker
+    P-->>A: redirect to the app link ?attempt_id=...
+    P->>GW: POST /v1/webhooks/kyc/{provider} (signed body, no token)
+    GW->>U: raw body unchanged
+    U->>U: verify signature; fetch identity; name (token similarity ≥ 0.85) + DOB vs profile
+    U->>U: one transaction: verified, or review; level recomputed; outbox user.kyc_level_changed
+    A->>GW: poll GET /v1/me/kyc until gov_id.status ≠ pending
+    MQ->>D: user.kyc_level_changed (full snapshot + previous level)
+    D->>D: projections: gates (create_journey, send_connection_request, chat), verified_only, badges
+```
+
+- **Levels:** an official email alone gives `partial`, and a verified government ID gives `full`
+  (spec §14). The level is derived in `cogo_common.kyc`, which also holds the gate check used by
+  journey- and chat-service.
+- **What's kept:** the verified address, the ID type, the last 4 digits and two match booleans.
+  The name and DOB from the ID are compared in memory and never stored, logged or queued. This
+  is why the webhook applies the result in the request instead of queueing it (RECON D39).
+- **Official-email codes** are HMACs in `kyc_attempts`. They go to notification-service by a
+  direct publish, so the plaintext code never sits in an outbox table.
+- **Gates are config** (`kyc.gates`). Every service reads the same config Redis, so changing a
+  gate applies within the cache TTL, with no deploy. An unknown level fails closed.
+
+## Later
+
+Matching compares endpoints and dates, not route geometry. If product wants "same
 road" matching (for example, Delhi to Manali matching Chandigarh to Manali), add a simplified
 route `LineString` per journey and score corridor overlap, with H3 cells as a candidate index.
-eKYC (M6), admin (M7) and hardening (M8) follow the milestone plan in RECON.md.
+Admin (M7) and hardening (M8) follow the milestone plan in RECON.md.
 
 New services copy the user-service template:
 - `cogo-common` for logging, errors, the token verifier, DB, outbox/inbox and topology.

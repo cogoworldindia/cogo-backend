@@ -183,12 +183,12 @@ def op_facts(spec: dict[str, Any], method: str, path: str) -> dict[str, Any]:
     query_p = [p["name"] + ("" if p.get("required") else "?") for p in params if p["in"] == "query"]
     bits = ([f"Path: {', '.join(path_p)}"] if path_p else []) + ([f"Query: {', '.join(query_p)}"] if query_p else [])
     body = (op.get("requestBody") or {}).get("content", {}).get("application/json", {}).get("schema")
-    code = next(c for c in op["responses"] if c.startswith("2"))
+    code = next(c for c in op["responses"] if c[0] in "23")  # 2xx, or a redirect
     resp = op["responses"][code].get("content", {}).get("application/json", {}).get("schema", {})
     data: dict[str, Any] = {}
     if "$ref" in resp:
         data = spec["components"]["schemas"][ref_name(resp["$ref"])].get("properties", {}).get("data", {})
-    status = {"200": "200 OK", "201": "201 Created", "202": "202 Accepted"}.get(code, code)
+    status = {"200": "200 OK", "201": "201 Created", "202": "202 Accepted", "303": "303 See Other"}.get(code, code)
     return {"params": "\n".join(bits) or "—", "req_schema": type_of(body) if body else "—",
             "resp_schema": type_of(data) if data else "—", "success": status,
             "refs": refs_in(spec, body) | refs_in(spec, data), "body_refs": refs_in(spec, body)}  # fmt: skip

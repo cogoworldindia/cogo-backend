@@ -34,7 +34,7 @@ Phase 1 progress and every difference from the build spec are tracked in [docs/R
 | [docs/SETUP.md](docs/SETUP.md) | Setup, native hot reload, migrations, tests, the multi-repo workflow, adding a service, troubleshooting, production checklist |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, flows (sequence diagrams), data ownership, messaging, security, scalability, Phase 3 |
 | [docs/architecture.svg](docs/architecture.svg) ([png](docs/architecture.png)) | Architecture diagram |
-| [docs/api/CoGo-API-Reference.xlsx](docs/api/CoGo-API-Reference.xlsx) | API reference per service: routes, endpoints, schemas, events, error codes |
+| [docs/api/CoGo-API-Reference.xlsx](docs/api/CoGo-API-Reference.xlsx) | API reference for every service: routes, endpoints, WebSocket protocol, schemas, events, error codes. Generated from the code (`make api-docs`) |
 | [docs/perf/matching.md](docs/perf/matching.md) | Matching load check at 100k journeys, with the candidate query plan |
 | `contracts/openapi/`, `contracts/events/` | Generated API and event contracts for every service (`make contracts`) |
 

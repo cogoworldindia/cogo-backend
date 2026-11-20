@@ -101,6 +101,8 @@ docker compose --env-file .env --env-file .env.secrets up -d --build user-servic
 make down                         # stop, keep data
 make clean                        # stop and DELETE all local data (fresh databases next time)
 make obs-up                       # Jaeger :16686, Prometheus :9090, Grafana :3001
+make contracts                    # regenerate contracts/ (OpenAPI + event JSON Schemas) after an API change
+make api-docs                     # ...and the API workbook (docs/api/CoGo-API-Reference.xlsx)
 ```
 
 ## 6. Run one service natively (hot reload)

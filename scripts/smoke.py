@@ -165,7 +165,11 @@ def otp_for(email: str, timeout: float = 20.0) -> str:
 
 
 def sign_in(email: str) -> dict[str, Any]:
-    status, _, _ = call("POST", f"{GATEWAY}/v1/auth/email/send", {"email": email})
+    for _ in range(4):  # like the app: honour the gateway's per-IP limit (5/min) via Retry-After
+        status, headers, body = call("POST", f"{GATEWAY}/v1/auth/email/send", {"email": email})
+        if not (status == 429 and ((body or {}).get("error") or {}).get("type") == "rate_limited"):
+            break
+        time.sleep(int(headers.get("retry-after", "10")) + 1)
     assert status == 202, status
     status, _, body = call("POST", f"{GATEWAY}/v1/auth/email/verify", {"email": email, "code": otp_for(email)})
     assert status == 200, body

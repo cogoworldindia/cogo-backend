@@ -4,7 +4,7 @@ PY_PROJECTS := libs/common services/auth services/user services/journey services
 
 .DEFAULT_GOAL := help
 .PHONY: help setup secrets check-docker build up down restart ps logs logs-% migrate obs-up \
-        test lint smoke contracts clean
+        test lint smoke e2e contracts api-docs clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_%-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n",$$1,$$2}'
@@ -57,8 +57,14 @@ contracts: ## Regenerate contracts/ (event JSON Schemas + OpenAPI); CI fails if 
 	@cd libs/common && uv run --quiet python ../../scripts/export_event_schemas.py ../../contracts/events
 	@set -e; for s in auth user journey social chat notification; do (cd services/$$s && PYTHONPATH=. uv run --quiet python ../../scripts/export_openapi.py ../../contracts/openapi/$$s-service.json); done
 
-smoke: ## End-to-end check against the running stack
+api-docs: contracts ## Rebuild docs/api/CoGo-API-Reference.xlsx from the code (fails if api_content.py is stale)
+	@cd libs/common && uv run --quiet --with openpyxl python ../../docs/api/build_api_xlsx.py ../../contracts/openapi ../../docs/api/CoGo-API-Reference.xlsx
+
+smoke: ## Quick end-to-end check against the running stack (~1 min)
 	@python3 scripts/smoke.py
+
+e2e: ## Full end-to-end API test: 4 users, every public endpoint, coverage vs contracts (~2 min)
+	@python3 scripts/e2e.py
 
 clean: ## Stop and DELETE all local data volumes
 	$(COMPOSE) --profile observability down -v --remove-orphans

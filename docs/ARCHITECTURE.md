@@ -3,8 +3,8 @@
 CoGo connects people whose travel paths overlap. This document describes how the backend is
 built today (Phase 1 through milestone M5; progress and every difference from the build spec are
 in [RECON.md](RECON.md)). For running it locally, see [SETUP.md](SETUP.md). For endpoint-level
-detail, see the generated contracts in `contracts/openapi/` and `contracts/events/` (the
-[API workbook](api/CoGo-API-Reference.xlsx) covers the auth and user core).
+detail, see the [API workbook](api/CoGo-API-Reference.xlsx) (every service, generated from the
+code) and the contracts in `contracts/openapi/` and `contracts/events/`.
 
 ![CoGo backend architecture](architecture.svg)
 

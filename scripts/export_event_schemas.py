@@ -36,10 +36,16 @@ EVENTS = {
     K.CHAT_MESSAGE_CREATED: c.ChatMessageCreated,
 }
 
-out = Path(sys.argv[1])
-out.mkdir(parents=True, exist_ok=True)
-(out / "_envelope.json").write_text(json.dumps(EventEnvelope.model_json_schema(), indent=2, sort_keys=True) + "\n")
-for event_type, model in EVENTS.items():
-    schema = {"title": f"{event_type} v1 (data)", **model.model_json_schema()}
-    (out / f"{event_type}.v1.json").write_text(json.dumps(schema, indent=2, sort_keys=True) + "\n")
-print(f"wrote {len(EVENTS) + 1} schemas to {out}")
+
+
+def main(out: Path) -> None:
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "_envelope.json").write_text(json.dumps(EventEnvelope.model_json_schema(), indent=2, sort_keys=True) + "\n")
+    for event_type, model in EVENTS.items():
+        schema = {"title": f"{event_type} v1 (data)", **model.model_json_schema()}
+        (out / f"{event_type}.v1.json").write_text(json.dumps(schema, indent=2, sort_keys=True) + "\n")
+    print(f"wrote {len(EVENTS) + 1} schemas to {out}")
+
+
+if __name__ == "__main__":  # importable: docs/api/build_api_xlsx.py reads EVENTS
+    main(Path(sys.argv[1]))

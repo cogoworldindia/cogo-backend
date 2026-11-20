@@ -1,0 +1,26 @@
+{
+  "description": "social-service -> social.user_blocked / social.user_unblocked. `version` is a\nmonotonic per-pair stamp so consumers can ignore a stale block/unblock.",
+  "properties": {
+    "blocked_id": {
+      "format": "uuid",
+      "title": "Blocked Id",
+      "type": "string"
+    },
+    "blocker_id": {
+      "format": "uuid",
+      "title": "Blocker Id",
+      "type": "string"
+    },
+    "version": {
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "blocker_id",
+    "blocked_id",
+    "version"
+  ],
+  "title": "UserBlocked",
+  "type": "object"
+}

@@ -1,0 +1,102 @@
+{
+  "$defs": {
+    "UserRef": {
+      "description": "Display data carried in fat events so consumers never call back.",
+      "properties": {
+        "avatar_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Avatar Url"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Username"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "UserRef",
+      "type": "object"
+    }
+  },
+  "description": "journey-service -> journey.liked / journey.commented.\n\nFat event: notification-service needs no call back for names or route text.",
+  "properties": {
+    "actor": {
+      "$ref": "#/$defs/UserRef"
+    },
+    "comment_excerpt": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Comment Excerpt"
+    },
+    "journey_id": {
+      "format": "uuid",
+      "title": "Journey Id",
+      "type": "string"
+    },
+    "owner_id": {
+      "format": "uuid",
+      "title": "Owner Id",
+      "type": "string"
+    },
+    "route_text": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Route Text"
+    }
+  },
+  "required": [
+    "journey_id",
+    "owner_id",
+    "actor"
+  ],
+  "title": "JourneyEngagement",
+  "type": "object"
+}

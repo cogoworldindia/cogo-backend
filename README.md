@@ -18,18 +18,25 @@ versions and holds the local stack.
 | `libs/common` | `cogo-common` | Shared infrastructure: logging, error envelope, JWKS/JWT verification, DB/Redis helpers, outbox/inbox, RabbitMQ topology, telemetry |
 | `services/api-gateway` | `api-gateway` | Public edge: route allowlist, edge JWT check, Redis rate limits, streaming proxy |
 | `services/auth` | `auth-service` | Identity: email OTP, Google (Firebase) sign-in, account linking, EdDSA access tokens + JWKS, rotating refresh sessions |
-| `services/user` | `user-service` | User records and profiles; consumes `user.registered` |
-| `services/notification` | `notification-service` | Queue-driven email worker (no HTTP send API) |
+| `services/user` | `user-service` | Profiles, tags, covers, media uploads; emits `user.*`; consumes `user.registered`, `social.*followed` |
+| `services/journey` | `journey-service` | Journeys, home feed, engagement, share pages, Places proxy, matching worker + Matches list |
+| `services/social` | `social-service` | Follows, blocks, reports, auto-hide moderation |
+| `services/chat` | `chat-service` | Connection requests, connections, conversations, messages (`chat-api`), and the WebSocket server (`chat-ws`) |
+| `services/notification` | `notification-service` | Email (OTP) and push notifications: device tokens, preferences, FCM (no HTTP send API) |
 | `services/mail` | `mail-service` | **Retired** (Java/Gmail). Not started by compose; kept only until its unpushed commit is dealt with |
 
 ## Documentation
+
+Phase 1 progress and every difference from the build spec are tracked in [docs/RECON.md](docs/RECON.md).
 
 | Document | For |
 |---|---|
 | [docs/SETUP.md](docs/SETUP.md) | Setup, native hot reload, migrations, tests, the multi-repo workflow, adding a service, troubleshooting, production checklist |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, flows (sequence diagrams), data ownership, messaging, security, scalability, Phase 3 |
 | [docs/architecture.svg](docs/architecture.svg) ([png](docs/architecture.png)) | Architecture diagram |
-| [docs/api/CoGo-API-Reference.xlsx](docs/api/CoGo-API-Reference.xlsx) | API reference per service: routes, endpoints, schemas, events, error codes |
+| [docs/api/CoGo-API-Reference.xlsx](docs/api/CoGo-API-Reference.xlsx) | API reference for every service: routes, endpoints, WebSocket protocol, schemas, events, error codes. Generated from the code (`make api-docs`) |
+| [docs/perf/matching.md](docs/perf/matching.md) | Matching load check at 100k journeys, with the candidate query plan |
+| `contracts/openapi/`, `contracts/events/` | Generated API and event contracts for every service (`make contracts`) |
 
 ## Quick start
 
@@ -47,6 +54,7 @@ make smoke     # end-to-end check through the gateway
 | http://localhost:8000 | API gateway (the only API endpoint clients use) |
 | http://localhost:8025 | Mailpit: every email the stack sends (including OTP codes) lands here |
 | http://localhost:15672 | RabbitMQ management (user `cogo`, password in `.env.secrets`) |
+| http://localhost:9000 | Media store (RustFS, S3-compatible): presigned uploads and served files |
 | `localhost:5433` | Postgres (superuser `postgres`; one role per service DB) |
 
 `make help` lists everything. The most used targets are `logs-<service>`, `test`, `lint`, `migrate`
@@ -119,6 +127,7 @@ through a named Docker build context in compose (`additional_contexts: common`).
 
 ## Roadmap
 
-The audit and the phased plan (trip-service with PostGIS, H3-based route matching,
-connections, media, chat, production platform) are in the planning notes for this refactor. The
-next services follow the same template as user-service.
+Phase 1 follows the build spec's milestones (M0–M8). M0–M5 are done: platform foundations,
+profiles and follows, journeys, feed and safety, matching, and chat with push notifications.
+Next are eKYC (M6), admin and moderation (M7) and hardening (M8). The plan and its
+status are in [docs/RECON.md](docs/RECON.md) §5.

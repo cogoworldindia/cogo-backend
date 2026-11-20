@@ -1,0 +1,113 @@
+{
+  "$defs": {
+    "UserRef": {
+      "description": "Display data carried in fat events so consumers never call back.",
+      "properties": {
+        "avatar_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Avatar Url"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Username"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "UserRef",
+      "type": "object"
+    }
+  },
+  "description": "chat-service -> chat.request_sent. Fat: notification-service never calls back.",
+  "properties": {
+    "journey_match": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Journey Match"
+    },
+    "receiver_id": {
+      "format": "uuid",
+      "title": "Receiver Id",
+      "type": "string"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "route_text": {
+      "title": "Route Text",
+      "type": "string"
+    },
+    "sender": {
+      "$ref": "#/$defs/UserRef"
+    },
+    "target_journey_id": {
+      "format": "uuid",
+      "title": "Target Journey Id",
+      "type": "string"
+    },
+    "vibe_match": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Vibe Match"
+    }
+  },
+  "required": [
+    "request_id",
+    "sender",
+    "receiver_id",
+    "target_journey_id",
+    "route_text"
+  ],
+  "title": "ChatRequestSent",
+  "type": "object"
+}

@@ -1,0 +1,45 @@
+{
+  "description": "social-service -> safety.content_hidden / safety.content_unhidden. The service that\nowns the target sets or clears its `moderation_hidden` flag.",
+  "properties": {
+    "reason": {
+      "title": "Reason",
+      "type": "string"
+    },
+    "target_id": {
+      "format": "uuid",
+      "title": "Target Id",
+      "type": "string"
+    },
+    "target_owner_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Target Owner Id"
+    },
+    "target_type": {
+      "enum": [
+        "user",
+        "journey",
+        "comment",
+        "message",
+        "media"
+      ],
+      "title": "Target Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "target_type",
+    "target_id",
+    "reason"
+  ],
+  "title": "ContentModeration",
+  "type": "object"
+}

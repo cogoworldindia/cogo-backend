@@ -1,0 +1,99 @@
+{
+  "$defs": {
+    "UserRef": {
+      "description": "Display data carried in fat events so consumers never call back.",
+      "properties": {
+        "avatar_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Avatar Url"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Username"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "UserRef",
+      "type": "object"
+    }
+  },
+  "description": "chat-service -> chat.message_created. notification-service pushes only if the\nrecipient wasn't online when it was sent (the socket delivered it), isn't online now,\nand hadn't muted the chat.",
+  "properties": {
+    "conversation_id": {
+      "format": "uuid",
+      "title": "Conversation Id",
+      "type": "string"
+    },
+    "message_id": {
+      "format": "uuid",
+      "title": "Message Id",
+      "type": "string"
+    },
+    "preview": {
+      "title": "Preview",
+      "type": "string"
+    },
+    "recipient_id": {
+      "format": "uuid",
+      "title": "Recipient Id",
+      "type": "string"
+    },
+    "recipient_muted": {
+      "default": false,
+      "title": "Recipient Muted",
+      "type": "boolean"
+    },
+    "recipient_online": {
+      "default": false,
+      "title": "Recipient Online",
+      "type": "boolean"
+    },
+    "sender": {
+      "$ref": "#/$defs/UserRef"
+    }
+  },
+  "required": [
+    "message_id",
+    "conversation_id",
+    "sender",
+    "recipient_id",
+    "preview"
+  ],
+  "title": "ChatMessageCreated",
+  "type": "object"
+}

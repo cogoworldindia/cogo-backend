@@ -17,3 +17,11 @@ SQL
 
 create_service_db "${AUTH_DB:-authdb}" "${AUTH_DB_USER:-auth_svc}" "${AUTH_DB_PASSWORD:?AUTH_DB_PASSWORD required}"
 create_service_db "${USER_DB:-userdb}" "${USER_DB_USER:-user_svc}" "${USER_DB_PASSWORD:?USER_DB_PASSWORD required}"
+create_service_db "${JOURNEY_DB:-journeydb}" "${JOURNEY_DB_USER:-journey_svc}" "${JOURNEY_DB_PASSWORD:?JOURNEY_DB_PASSWORD required}"
+create_service_db "${SOCIAL_DB:-socialdb}" "${SOCIAL_DB_USER:-social_svc}" "${SOCIAL_DB_PASSWORD:?SOCIAL_DB_PASSWORD required}"
+create_service_db "${CHAT_DB:-chatdb}" "${CHAT_DB_USER:-chat_svc}" "${CHAT_DB_PASSWORD:?CHAT_DB_PASSWORD required}"
+create_service_db "${NOTIFICATION_DB:-notificationdb}" "${NOTIFICATION_DB_USER:-notification_svc}" "${NOTIFICATION_DB_PASSWORD:?NOTIFICATION_DB_PASSWORD required}"
+
+# PostGIS is not a trusted extension, so the superuser installs it for the services that
+# need spatial queries (journey matching and filters).
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "${JOURNEY_DB:-journeydb}" -c "CREATE EXTENSION IF NOT EXISTS postgis"

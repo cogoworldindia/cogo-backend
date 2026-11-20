@@ -1,0 +1,45 @@
+{
+  "description": "any service -> `notification.email.requested`.",
+  "properties": {
+    "expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expires At"
+    },
+    "locale": {
+      "default": "en",
+      "title": "Locale",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": true,
+      "title": "Params",
+      "type": "object"
+    },
+    "template": {
+      "const": "otp",
+      "title": "Template",
+      "type": "string"
+    },
+    "to": {
+      "format": "email",
+      "title": "To",
+      "type": "string"
+    }
+  },
+  "required": [
+    "template",
+    "to",
+    "params"
+  ],
+  "title": "EmailRequested",
+  "type": "object"
+}

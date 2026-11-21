@@ -1,0 +1,19 @@
+CoGo {{ .Values.image.tag | default .Chart.AppVersion }} in namespace {{ .Release.Namespace }} (ENV={{ .Values.commonEnv.ENV }}).
+{{- if .Values.ingress.enabled }}
+
+Public API: {{ ternary "https" "http" .Values.ingress.tls.enabled }}://{{ first .Values.ingress.hosts }}
+WebSocket:  {{ ternary "wss" "ws" .Values.ingress.tls.enabled }}://{{ first .Values.ingress.hosts }}{{ .Values.ingress.websocket.path }}
+{{- end }}
+
+Watch the rollout:
+  kubectl -n {{ .Release.Namespace }} get deploy,hpa,scaledobject -l app.kubernetes.io/instance={{ .Release.Name }}
+
+Create an admin (prints the authenticator secret once):
+  kubectl -n {{ .Release.Namespace }} exec -it deploy/{{ include "cogo.componentName" (dict "root" . "name" "admin-api") }} -- \
+    python -m app.cli create-admin --email ops@cogo.app --role admin
+{{- $values := toYaml .Values }}
+{{- if or (contains ".invalid" $values) (contains "REPLACE-ME" $values) (contains "123456789012" $values) }}
+
+WARNING: some values are still placeholders (".invalid" hosts, "REPLACE-ME", account
+123456789012). Set the real endpoints before relying on this release.
+{{- end }}

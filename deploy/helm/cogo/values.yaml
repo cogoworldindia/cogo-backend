@@ -1,0 +1,527 @@
+# Default values for the CoGo backend chart. values-staging.yaml layers the staging
+# environment (Mumbai) on top of these. See README.md for the Secrets the chart expects.
+#
+# Env var names are the ones the services read (services/*/app/config.py, the shared
+# cogo_common.settings.ServiceSettings) and that docker-compose.yml passes. Env values may be
+# strings, numbers, booleans or lists (lists become JSON, which pydantic-settings parses).
+# An empty string or null leaves the variable unset, so the service default applies.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  # Registry prefix for every CoGo image, for example
+  #   <account>.dkr.ecr.ap-south-1.amazonaws.com    (EKS, Mumbai)
+  #   asia-south1-docker.pkg.dev/<project>/cogo      (GKE, Mumbai)
+  # Empty pulls "cogo/<service>" from Docker Hub, which is not where CoGo images live.
+  registry: ""
+  # Tag for every image (use the CI build tag, e.g. the git SHA). Empty = Chart appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  # IRSA (eks.amazonaws.com/role-arn) or Workload Identity (iam.gke.io/gcp-service-account),
+  # e.g. so user-service reaches the media bucket without static MEDIA_* keys.
+  annotations: {}
+
+# docker-compose x-common-env: every CoGo pod gets these (cogo_common.settings).
+commonEnv:
+  ENV: production            # development | test | staging | production
+  LOG_LEVEL: INFO
+  LOG_JSON: true
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""   # e.g. http://otel-collector.observability:4318; empty = no traces
+  APP_CONFIG_TTL_SECONDS: 60        # how often services re-read app config from CONFIG_REDIS_URL
+  SENTRY_TRACES_SAMPLE_RATE: 0
+
+# SENTRY_DSN for every pod, from a Secret (empty secretName: Sentry off).
+sentry:
+  secretName: ""
+  key: SENTRY_DSN
+
+# Inbox/outbox purge and counter reconciliation (cogo_common.maintenance). Which pods run
+# the purge is set per deployable with MAINTENANCE_ENABLED (workers and admin-api).
+# These go to every pod that has a database.
+maintenance:
+  MAINTENANCE_INTERVAL_SECONDS: 3600
+  PROCESSED_EVENTS_RETENTION_DAYS: 14
+  OUTBOX_RETENTION_DAYS: 7
+
+jwt:
+  issuer: cogo-auth          # JWT_ISSUER
+  audience: cogo-api         # JWT_AUDIENCE
+  jwksFrom: auth-api         # AUTH_JWKS_URL = http://<that deployable>:8000/.well-known/jwks.json
+  privateKey:                # auth-service only: mounted at /run/secrets/jwt_private_key
+    secretName: cogo-jwt-private-key
+    key: jwt_private_key
+
+serviceKeys:
+  # Each service's own Ed25519 key, mounted at /run/secrets/service_key:
+  # Secret "<privateKeySecretPrefix><SERVICE_NAME>" (e.g. cogo-service-key-auth-service).
+  privateKeySecretPrefix: cogo-service-key-
+  privateKeySecretKey: service_key
+  # Every service's public key, one "<SERVICE_NAME>.pem" entry each, mounted at /run/service-keys/.
+  publicKeysSecret: cogo-service-public-keys
+
+# Managed Postgres: one database and login role per service (services.*.database).
+# Passwords come from each service's Secret; they must be URL-safe (hex), as in .env.secrets.
+postgres:
+  host: postgres.cogo.invalid
+  port: 5432
+  urlQuery: ""         # appended to DATABASE_URL, e.g. "ssl=require" (asyncpg)
+  poolSize: null       # DB_POOL_SIZE per replica; null keeps the service default (10, admin 5)
+  maxOverflow: null    # DB_MAX_OVERFLOW
+
+# Redis URLs by role (the compose database numbers). With existingSecret set, each URL is read
+# from that Secret instead, under the same key (auth, notification, ...): use that when the
+# URL carries a password (rediss://:<token>@host:6379/0).
+redis:
+  existingSecret: ""
+  urls:
+    auth: redis://redis.cogo.invalid:6379/0           # auth REDIS_URL: OTPs, sessions (never evict)
+    notification: redis://redis.cogo.invalid:6379/1   # notification REDIS_URL
+    gateway: redis://redis.cogo.invalid:6379/2        # gateway REDIS_URL: rate limits
+    admin: redis://redis.cogo.invalid:6379/3          # admin REDIS_URL: admin sessions
+    journey: redis://redis.cogo.invalid:6379/4        # journey REDIS_URL: Places cache, scheduler locks
+    realtime: redis://redis.cogo.invalid:6379/6       # chat REDIS_URL, chat-ws REDIS_URL, notification REALTIME_REDIS_URL
+    config: redis://redis.cogo.invalid:6379/7         # CONFIG_REDIS_URL (every service)
+
+# RABBITMQ_URL (amqp:// or amqps://, with the vhost) from a Secret. KEDA reads the same key.
+rabbitmq:
+  existingSecret: cogo-rabbitmq
+  urlKey: RABBITMQ_URL
+
+# Defaults for every CoGo pod.
+pod:
+  webConcurrency: 1          # WEB_CONCURRENCY (uvicorn workers); scale with replicas instead
+  terminationGracePeriodSeconds: 30   # uvicorn --timeout-graceful-shutdown is 20 s
+  preStopSleepSeconds: 5     # let endpoints and the ingress drop the pod before SIGTERM
+  tmpSizeLimit: 64Mi         # emptyDir at /tmp (the root filesystem is read-only)
+  annotations: {}
+  labels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpread:
+    enabled: true
+    maxSkew: 1
+    whenUnsatisfiable: ScheduleAnyway
+    topologyKeys: [topology.kubernetes.io/zone, kubernetes.io/hostname]
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    capabilities:
+      drop: [ALL]
+  probes:
+    startup:   { path: /healthz, periodSeconds: 2, timeoutSeconds: 2, failureThreshold: 45 }
+    liveness:  { path: /healthz, periodSeconds: 10, timeoutSeconds: 3, failureThreshold: 3 }
+    readiness: { path: /readyz, periodSeconds: 5, timeoutSeconds: 3, failureThreshold: 3 }
+
+# HPA behaviour, shared by the CPU HPAs and the HPAs KEDA creates for workers.
+hpaBehavior:
+  scaleDown:
+    stabilizationWindowSeconds: 300
+    policies:
+      - { type: Percent, value: 50, periodSeconds: 60 }
+  scaleUp:
+    stabilizationWindowSeconds: 0
+    policies:
+      - { type: Percent, value: 100, periodSeconds: 30 }
+      - { type: Pods, value: 4, periodSeconds: 30 }
+    selectPolicy: Max
+
+# Defaults by role, merged under every deployable of that role (a deployable's own keys win).
+#   gateway, api, ws: Service + CPU HPA.   worker: KEDA on its queues.   scheduler: fixed.
+roles:
+  gateway:
+    replicas: 2
+    resources:
+      requests: { cpu: 200m, memory: 256Mi }
+      limits:   { cpu: "1", memory: 512Mi }
+    autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 10, targetCPUUtilizationPercentage: 70 }
+  api:
+    replicas: 2
+    resources:
+      requests: { cpu: 200m, memory: 256Mi }
+      limits:   { cpu: "1", memory: 512Mi }
+    autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 8, targetCPUUtilizationPercentage: 70 }
+  ws:
+    replicas: 2
+    resources:
+      requests: { cpu: 200m, memory: 256Mi }
+      limits:   { cpu: "1", memory: 512Mi }
+    autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 10, targetCPUUtilizationPercentage: 70 }
+  worker:
+    replicas: 1
+    resources:
+      requests: { cpu: 200m, memory: 256Mi }
+      limits:   { cpu: "1", memory: 512Mi }
+    keda:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 6
+      pollingInterval: 15
+      cooldownPeriod: 300
+      queueLength: 50        # target ready messages per replica (KEDA rabbitmq "value")
+  scheduler:
+    replicas: 1
+    resources:
+      requests: { cpu: 100m, memory: 192Mi }
+      limits:   { cpu: 500m, memory: 384Mi }
+
+# One entry per logical service (its SERVICE_NAME identity). Shared wiring:
+#   image.repository   image (registry and tag come from image.* unless set here)
+#   serviceName        SERVICE_NAME; also names its key Secret and its public key file
+#   secretName         the service's env Secret (DB password, secretEnv keys)
+#   database           DATABASE_URL = postgresql+asyncpg://<user>:$(<passwordKey>)@<host>/<name>
+#   migrations         run `alembic upgrade head` as a pre-install/pre-upgrade hook Job
+#   redis              REDIS_URL role (redis.urls.<role>); realtimeRedis adds REALTIME_REDIS_URL
+#   rabbitmq           RABBITMQ_URL;  jwks: AUTH_JWKS_URL + JWT_ISSUER/JWT_AUDIENCE
+#   jwtPrivateKey      auth only;     serviceKey / publicKeys: the service-token key mounts
+#   internalUrls       ENV_VAR: deployable ("ws://chat-ws" for another scheme)
+#   secretEnv          env vars read from secretName (a name, or {name, key, secretName, optional})
+#   files              extra Secret files under /run/secrets/<path>; env gets the path
+#   env                non-secret settings; each deployable's env is merged on top
+#   deployables        the Deployments built from this service (role + flags + scaling)
+services:
+  gateway:
+    serviceName: api-gateway
+    image: { repository: cogo/api-gateway }
+    redis: gateway
+    jwks: true
+    internalUrls:
+      AUTH_SERVICE_URL: auth-api
+      USER_SERVICE_URL: user-api
+      JOURNEY_SERVICE_URL: journey-api
+      SOCIAL_SERVICE_URL: social-api
+      CHAT_SERVICE_URL: chat-api
+      CHAT_WS_URL: ws://chat-ws
+      NOTIFICATION_SERVICE_URL: notification-api
+      ADMIN_SERVICE_URL: admin-api
+    env:
+      CORS_ALLOW_ORIGINS: []            # browser origins (JSON list); mobile apps need none
+      ADMIN_ALLOWED_CIDRS: []           # who may open /admin/*; empty = nobody
+      # Proxies whose X-Forwarded-For uvicorn trusts: the pod CIDR the ingress controller
+      # runs in. Too wide and clients can spoof their IP (rate limits, admin allow-list).
+      FORWARDED_ALLOW_IPS: 10.0.0.0/8
+      # Firebase App Check on abuse-prone routes: off | log | enforce. Roll out with log first.
+      APP_CHECK_MODE: "off"
+      APP_CHECK_PROJECT_NUMBER: ""      # Firebase project number; required unless off
+      APP_CHECK_JWKS_URL: ""            # empty = the service default (Firebase's JWKS)
+    deployables:
+      api-gateway:
+        role: gateway
+        metricsPort: 9100               # METRICS_PORT: /metrics is not on the public port
+
+  auth:
+    serviceName: auth-service
+    image: { repository: cogo/auth-service }
+    secretName: cogo-auth
+    database: { name: authdb, user: auth_svc, passwordKey: AUTH_DB_PASSWORD }
+    migrations: true
+    redis: auth
+    rabbitmq: true
+    jwtPrivateKey: true
+    serviceKey: true
+    publicKeys: true
+    secretEnv: [OTP_HMAC_KEY]
+    env:
+      ACCESS_TOKEN_TTL_SECONDS: 900
+      REFRESH_TOKEN_TTL_DAYS: 30
+      FIREBASE_PROJECT_ID: ""           # Google sign-in; empty disables it (503 provider_disabled)
+    deployables:
+      auth-api:
+        role: api
+        env: { CONSUMERS_ENABLED: false, MAINTENANCE_ENABLED: false }
+      auth-worker:
+        role: worker
+        env: { CONSUMERS_ENABLED: true, MAINTENANCE_ENABLED: true }
+        keda:
+          queues: [{ name: auth-service }]
+
+  user:
+    serviceName: user-service
+    image: { repository: cogo/user-service }
+    secretName: cogo-user
+    database: { name: userdb, user: user_svc, passwordKey: USER_DB_PASSWORD }
+    migrations: true
+    rabbitmq: true
+    jwks: true
+    serviceKey: true
+    publicKeys: true
+    internalUrls:
+      AUTH_SERVICE_URL: auth-api
+      JOURNEY_SERVICE_URL: journey-api
+      SOCIAL_SERVICE_URL: social-api
+      CHAT_SERVICE_URL: chat-api
+      NOTIFICATION_SERVICE_URL: notification-api
+    secretEnv:
+      - KYC_OTP_HMAC_KEY
+      - KYC_CASHFREE_CLIENT_ID
+      - KYC_CASHFREE_CLIENT_SECRET
+      - GOOGLE_VISION_API_KEY             # IMAGE_MODERATION_PROVIDER=google
+      # Static S3/GCS HMAC keys. Optional: on EKS, IRSA on the service account works instead.
+      - { name: MEDIA_ACCESS_KEY, optional: true }
+      - { name: MEDIA_SECRET_KEY, optional: true }
+    env:
+      MEDIA_BUCKET: cogo-media
+      MEDIA_REGION: ap-south-1
+      MEDIA_PUBLIC_BASE_URL: https://media.cogo.app    # CDN in front of the bucket
+      MEDIA_S3_ENDPOINT: ""             # empty = AWS S3; GCS: https://storage.googleapis.com
+      MEDIA_PRESIGN_ENDPOINT: ""
+      KYC_PROVIDER: cashfree            # mock | cashfree (mock is refused in staging/production)
+      KYC_CASHFREE_BASE_URL: https://api.cashfree.com/verification
+      KYC_RETURN_URL: https://cogo.app/kyc/return     # must be an https app link for Cashfree
+      IMAGE_MODERATION_PROVIDER: google # mock | google (Cloud Vision SafeSearch)
+    deployables:
+      user-api:
+        role: api
+        env: { CONSUMERS_ENABLED: false, JOBS_ENABLED: false, MAINTENANCE_ENABLED: false }
+      user-worker:
+        role: worker
+        env: { CONSUMERS_ENABLED: true, JOBS_ENABLED: true, MAINTENANCE_ENABLED: true }
+        keda:
+          queues: [{ name: user-service }]
+
+  journey:
+    serviceName: journey-service
+    image: { repository: cogo/journey-service }
+    secretName: cogo-journey
+    database: { name: journeydb, user: journey_svc, passwordKey: JOURNEY_DB_PASSWORD }
+    migrations: true
+    redis: journey
+    rabbitmq: true
+    jwks: true
+    serviceKey: true
+    publicKeys: true
+    internalUrls:
+      SOCIAL_SERVICE_URL: social-api
+      CHAT_SERVICE_URL: chat-api
+    secretEnv: [CURSOR_SECRET, GOOGLE_PLACES_API_KEY]
+    env:
+      PLACES_PROVIDER: google           # mock | google (Places API (New))
+      PUBLIC_WEB_BASE_URL: https://cogo.app   # share links /j/{id}; that host must route to the gateway
+    deployables:
+      journey-api:
+        role: api
+        env: { CONSUMERS_ENABLED: false, SCHEDULER_ENABLED: false, MAINTENANCE_ENABLED: false }
+      journey-worker:                   # the matching worker
+        role: worker
+        env: { CONSUMERS_ENABLED: true, SCHEDULER_ENABLED: false, MAINTENANCE_ENABLED: true }
+        resources:
+          requests: { cpu: 300m, memory: 384Mi }
+          limits:   { cpu: "1", memory: 768Mi }
+        keda:
+          queues: [{ name: journey-service }]
+      journey-scheduler:                # lifecycle, reminders, matching sweep (Redis lock per job)
+        role: scheduler
+        replicas: 1
+        env: { CONSUMERS_ENABLED: false, SCHEDULER_ENABLED: true, MAINTENANCE_ENABLED: false }
+
+  social:
+    serviceName: social-service
+    image: { repository: cogo/social-service }
+    secretName: cogo-social
+    database: { name: socialdb, user: social_svc, passwordKey: SOCIAL_DB_PASSWORD }
+    migrations: true
+    rabbitmq: true
+    jwks: true
+    serviceKey: true
+    publicKeys: true
+    secretEnv: [CURSOR_SECRET]
+    deployables:
+      social-api:
+        role: api
+        env: { CONSUMERS_ENABLED: false, MAINTENANCE_ENABLED: false }
+      social-worker:
+        role: worker
+        env: { CONSUMERS_ENABLED: true, MAINTENANCE_ENABLED: true }
+        keda:
+          queues: [{ name: social-service }]
+
+  chat:
+    serviceName: chat-service
+    image: { repository: cogo/chat-service }
+    secretName: cogo-chat
+    database: { name: chatdb, user: chat_svc, passwordKey: CHAT_DB_PASSWORD }
+    migrations: true
+    redis: realtime
+    rabbitmq: true
+    jwks: true
+    serviceKey: true
+    publicKeys: true
+    internalUrls:
+      JOURNEY_SERVICE_URL: journey-api
+    secretEnv: [CURSOR_SECRET]
+    deployables:
+      chat-api:
+        role: api
+        env: { CONSUMERS_ENABLED: false, MAINTENANCE_ENABLED: false }
+      chat-worker:
+        role: worker
+        env: { CONSUMERS_ENABLED: true, MAINTENANCE_ENABLED: true }
+        keda:
+          queues: [{ name: chat-service }]
+
+  # chat-ws: the chat-service image with the WebSocket app (docker-compose chat-ws command).
+  chatWs:
+    serviceName: chat-ws
+    image: { repository: cogo/chat-service }
+    # --backlog: reconnect bursts overflowed uvicorn's default 2048 (M8 socket test)
+    args: ["uvicorn", "app.ws.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000",
+           "--proxy-headers", "--no-access-log", "--timeout-graceful-shutdown", "20", "--backlog", "4096"]
+    redis: realtime
+    jwks: true
+    serviceKey: true                    # signs calls to chat-api; verifies none, so no public keys
+    internalUrls:
+      CHAT_API_URL: chat-api
+    deployables:
+      chat-ws:
+        role: ws
+
+  notification:
+    serviceName: notification-service
+    image: { repository: cogo/notification-service }
+    secretName: cogo-notification
+    database: { name: notificationdb, user: notification_svc, passwordKey: NOTIFICATION_DB_PASSWORD }
+    migrations: true
+    redis: notification
+    realtimeRedis: true
+    rabbitmq: true
+    jwks: true
+    serviceKey: true
+    publicKeys: true
+    secretEnv: [SMTP_USERNAME, SMTP_PASSWORD]
+    files:
+      # Firebase service-account JSON for FCM (PUSH_PROVIDER=fcm)
+      - { secretName: cogo-fcm, key: fcm-service-account.json, path: fcm-service-account.json, env: FCM_CREDENTIALS_FILE }
+    env:
+      PUSH_PROVIDER: fcm                # mock | fcm
+      SMTP_HOST: email-smtp.ap-south-1.amazonaws.com   # Amazon SES, Mumbai
+      SMTP_PORT: 587
+      SMTP_STARTTLS: true
+      MAIL_FROM: CoGo <no-reply@cogo.app>
+    deployables:
+      notification-api:
+        role: api
+        env: { CONSUMERS_ENABLED: false, MAINTENANCE_ENABLED: false }
+      notification-worker:
+        role: worker
+        env: { CONSUMERS_ENABLED: true, MAINTENANCE_ENABLED: true }
+        keda:
+          queues:
+            - { name: notification-service }
+            - { name: notification.email, value: 10 }   # OTP emails: scale out early
+
+  admin:
+    serviceName: admin-service
+    image: { repository: cogo/admin-service }
+    secretName: cogo-admin
+    database: { name: admindb, user: admin_svc, passwordKey: ADMIN_DB_PASSWORD }
+    migrations: true
+    redis: admin
+    rabbitmq: true
+    serviceKey: true
+    publicKeys: true
+    internalUrls:
+      USER_SERVICE_URL: user-api
+      JOURNEY_SERVICE_URL: journey-api
+      SOCIAL_SERVICE_URL: social-api
+      CHAT_SERVICE_URL: chat-api
+      NOTIFICATION_SERVICE_URL: notification-api
+    secretEnv: [ADMIN_TOTP_ENCRYPTION_KEY]
+    # ADMIN_BOOTSTRAP_* is development only: the chart refuses to render it.
+    deployables:
+      admin-api:                        # API + console at /admin/console/; no worker, so it purges
+        role: api
+        env: { MAINTENANCE_ENABLED: true }
+
+# Migrations: one hook Job per service with `migrations: true`, straight to Postgres
+# (never through PgBouncer), with only DATABASE_URL, like the compose *-migrate containers.
+migrations:
+  enabled: true
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 86400      # failed Jobs stay a day for `kubectl logs`
+  resources:
+    requests: { cpu: 100m, memory: 192Mi }
+    limits:   { cpu: 500m, memory: 384Mi }
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts: [api.cogo.app]
+  annotations: {}                       # extra annotations for both Ingresses
+  bodySize: 2m                          # above the gateway's 1 MiB cap, so it answers with its own envelope
+  timeouts: { connect: 5, read: 60, send: 60 }
+  tls:
+    enabled: true
+    secretName: cogo-api-tls
+    clusterIssuer: ""                   # cert-manager ClusterIssuer; empty = secretName already exists
+  websocket:
+    path: /v1/ws                        # own Ingress so only the socket path gets long timeouts
+    timeoutSeconds: 3600
+
+keda:
+  enabled: true                         # needs KEDA 2.x; false = workers run fixed replicas
+  rabbitmq:
+    protocol: auto                      # infer amqp/http from the URI in rabbitmq.existingSecret
+
+pdb:
+  enabled: true                         # for every deployable whose minimum replicas > 1
+  maxUnavailable: 1
+
+networkPolicy:
+  enabled: true
+  defaultDenyIngress: true              # namespace-wide: every pod in the release namespace
+  ingressController:
+    namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+    podSelector: { matchLabels: { app.kubernetes.io/name: ingress-nginx } }
+  prometheus:
+    namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } }
+    podSelector: { matchLabels: { app.kubernetes.io/name: prometheus } }
+  allowCertManagerSolver: true          # HTTP-01 solver pods would otherwise be unreachable
+
+metrics:
+  serviceMonitor:
+    enabled: false                      # needs the Prometheus Operator CRDs
+    labels: {}                          # e.g. release: kube-prometheus-stack
+    interval: 30s
+    scrapeTimeout: 10s
+  prometheusRule:
+    enabled: false                      # the alert rules (files/alerts.yml), needs the Operator CRDs
+    labels: {}                          # e.g. release: kube-prometheus-stack
+  podAnnotations: false                 # prometheus.io/scrape annotations for annotation-based scrapers
+
+# Optional PgBouncer in front of Postgres, transaction pooling. See README "PgBouncer":
+# asyncpg uses prepared statements: PgBouncer >= 1.21 tracks them (max_prepared_statements).
+# Set it to 0 and the services get DB_PREPARED_STATEMENTS=false (no caches, unique names).
+pgbouncer:
+  enabled: false
+  image: { repository: edoburu/pgbouncer, tag: v1.26.1-p0 }
+  replicas: 2
+  port: 5432
+  # Secret with key userlist.txt: one `"<role>" "<password>"` line per service role.
+  userlistSecret: cogo-pgbouncer-userlist
+  authType: scram-sha-256
+  poolMode: transaction
+  maxClientConn: 2000
+  defaultPoolSize: 20
+  maxDbConnections: 0                   # per database, 0 = unlimited
+  maxPreparedStatements: 200
+  serverTlsSslmode: require
+  appUrlQuery: ""                       # DATABASE_URL query when going through PgBouncer
+  resources:
+    requests: { cpu: 50m, memory: 32Mi }
+    limits:   { cpu: 500m, memory: 128Mi }

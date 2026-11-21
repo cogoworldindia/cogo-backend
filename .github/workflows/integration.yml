@@ -20,9 +20,18 @@ jobs:
         run: make up
       - name: Smoke test
         run: make smoke
+      - name: Dead-letter queues are empty (spec §11)
+        run: make dlq
       - name: Logs on failure
         if: failure()
         run: docker compose --env-file .env --env-file .env.secrets logs --no-color --tail=200
+
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Helm lint + kubeconform (defaults, staging, staging with PgBouncer)
+        run: make chart
 
   secrets-scan:
     runs-on: ubuntu-latest

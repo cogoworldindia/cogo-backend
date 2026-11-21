@@ -36,7 +36,10 @@ Phase 1 progress and every difference from the build spec are tracked in [docs/R
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, flows (sequence diagrams), data ownership, messaging, security, scalability, Phase 3 |
 | [docs/architecture.svg](docs/architecture.svg) ([png](docs/architecture.png)) | Architecture diagram |
 | [docs/api/CoGo-API-Reference.xlsx](docs/api/CoGo-API-Reference.xlsx) | API reference for every service: routes, endpoints, WebSocket protocol, schemas, events, error codes. Generated from the code (`make api-docs`) |
+| [docs/perf/load.md](docs/perf/load.md) | k6 load tests and the 1-hour soak against the §11 targets, per-process capacity, what they found |
+| [docs/perf/feed.md](docs/perf/feed.md), [plans.md](docs/perf/plans.md) | Feed query cost at 10k–100k journeys; EXPLAIN plans of the feed and matches on seed data |
 | [docs/perf/matching.md](docs/perf/matching.md) | Matching load check at 100k journeys, with the candidate query plan |
+| [deploy/helm/cogo](deploy/helm/cogo/README.md) | Staging Helm chart (HPA, KEDA, PgBouncer, NetworkPolicies) and what to fill in before installing |
 | `contracts/openapi/`, `contracts/events/` | Generated API and event contracts for every service (`make contracts`) |
 
 ## Quick start
@@ -130,14 +133,16 @@ through a named Docker build context in compose (`additional_contexts: common`).
 
 ## Roadmap
 
-Phase 1 follows the build spec's milestones (M0–M8). M0–M7 are done:
+Phase 1 follows the build spec's milestones (M0–M8). M0–M8 are done here:
 - platform foundations;
 - profiles and follows;
 - journeys, the feed and safety;
 - matching;
 - chat with push notifications;
 - eKYC (official email + government ID, with config-driven gates);
-- the admin console and moderation, image moderation and account deletion.
+- the admin console and moderation, image moderation and account deletion;
+- hardening: App Check, maintenance, alerts and dashboards, load tests and a soak, the staging
+  Helm chart, the console's accessibility pass.
 
-Next is hardening (M8). The plan and its
-status are in [docs/RECON.md](docs/RECON.md) §5.
+What remains is M8's staging run: install the chart, then run the same load scripts and the
+soak there. The plan, decisions and open questions are in [docs/RECON.md](docs/RECON.md) §5.

@@ -5,8 +5,8 @@ and every error type. Its sheets:
 
 | Sheet | Contents |
 |---|---|
-| **Overview** | Basics (base URL, auth, WebSocket, push, envelope, lists, formats), breaking changes, and an index with live counts |
-| **Gateway Routes** | The public route table in match order, with edge auth and rate limits, the `/v1/ws` WebSocket, and edge behaviour |
+| **Overview** | Basics (base URL, auth, App Check, WebSocket, push, envelope, lists, formats), breaking and coming changes, and an index with live counts |
+| **Gateway Routes** | The public route table in match order, with edge auth, rate limits and which routes need App Check, the `/v1/ws` WebSocket, and edge behaviour |
 | **Auth / User / Journey / Social / Chat / Notification Service** | One row per endpoint: parameters, request and response schemas, examples, errors, rate limits and notes. Then internal endpoints, health, and the events each service consumes |
 | **Chat WebSocket** | Every client and server frame with examples, the close codes and the error codes |
 | **Events** | Every routing key: producer, consumers, queues, dead-letter queues, payload, idempotency |
@@ -20,7 +20,7 @@ Most of the workbook is generated from the code, so it can't disagree with it:
 | From the code | Source |
 |---|---|
 | Endpoints, parameters, request/response schemas, success status | `contracts/openapi/*.json` (`make contracts`) |
-| Edge auth and rate limit per endpoint; the route table | `services/api-gateway/app/routes.py` |
+| Edge auth, rate limit and App Check per endpoint (with its `app_check_failed` error); the route table | `services/api-gateway/app/routes.py` |
 | Events, queues, consumers, payload schemas | `cogo_common.events` topology and contracts; `scripts/export_event_schemas.py` |
 | The set of error types | every `error_type` raised in `services/*/app` and `libs/common` |
 

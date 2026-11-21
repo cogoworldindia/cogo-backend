@@ -20,6 +20,7 @@ import sys
 import time
 import uuid
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -225,6 +226,21 @@ def journey_body(origin: str, dest: str, start: datetime, hours: int = 30, **ext
 
 def match_ids(user: User, journey_id: str, query: str = "") -> list[str]:
     return [m["id"] for m in (data(api("GET", f"/v1/journeys/{journey_id}/matches{query}", token=user.token)) or {}).get("items", [])]
+
+
+def feed_ids(user: User, query: str) -> set[str]:
+    """Every journey id in the user's feed for this query, across all pages: the dev database
+    also holds seed and load-test journeys, so a trip can rank past the first page."""
+    ids: set[str] = set()
+    cursor = None
+    for _ in range(30):
+        path = f"/v1/feed?{query}" + (f"&cursor={urllib.parse.quote(cursor)}" if cursor else "")
+        page = data(api("GET", path, token=user.token)) or {}
+        ids |= {i["journey"]["id"] for i in page.get("items", []) if i.get("type") == "journey"}
+        cursor = page.get("next_cursor")
+        if not cursor:
+            break
+    return ids
 
 
 # ======================================================================== scenario
@@ -447,16 +463,14 @@ def scenario() -> int:
 
     # ------------------------------------------------------------ feed
     section("Home feed (ranked, filtered)")
-    feed = (data(api("GET", f"/v1/feed?to_place_id={RISHIKESH}", token=ravi.token)) or {}).get("items", [])
-    feed_ids = [i["journey"]["id"] for i in feed if i["type"] == "journey"]
-    check("Ravi's feed has Asha's trip, not his own, not the women-only one", a_j in feed_ids and r_j not in feed_ids and nw_j not in feed_ids, feed_ids)
-    check("Asha (female) does see the women-only trip",
-          nw_j in [i["journey"]["id"] for i in (data(api("GET", f"/v1/feed?to_place_id={RISHIKESH}", token=asha.token)) or {}).get("items", [])])
+    ravis = feed_ids(ravi, f"to_place_id={RISHIKESH}")
+    check("Ravi's feed has Asha's trip, not his own, not the women-only one", a_j in ravis and r_j not in ravis and nw_j not in ravis)
+    check("Asha (female) does see the women-only trip", nw_j in feed_ids(asha, f"to_place_id={RISHIKESH}"))
     day = start.astimezone(IST).date()
-    on_day = [i["journey"]["id"] for i in (data(api("GET", f"/v1/feed?to_place_id={RISHIKESH}&date_from={day}&date_to={day}", token=ravi.token)) or {}).get("items", [])]
-    later = (data(api("GET", f"/v1/feed?to_place_id={RISHIKESH}&date_from={day + timedelta(days=20)}", token=ravi.token)) or {}).get("items", [])
-    check("date filter (IST dates) includes the day and excludes later dates", a_j in on_day and not [i for i in later if i["journey"]["id"] == a_j])
-    check("people filter: 3 free seats needed", a_j in [i["journey"]["id"] for i in (data(api("GET", f"/v1/feed?to_place_id={RISHIKESH}&people=3", token=ravi.token)) or {}).get("items", [])])
+    on_day = feed_ids(ravi, f"to_place_id={RISHIKESH}&date_from={day}&date_to={day}")
+    later = feed_ids(ravi, f"to_place_id={RISHIKESH}&date_from={day + timedelta(days=20)}")
+    check("date filter (IST dates) includes the day and excludes later dates", a_j in on_day and a_j not in later)
+    check("people filter: 3 free seats needed", a_j in feed_ids(ravi, f"to_place_id={RISHIKESH}&people=3"))
     check("a bad date range -> 400 invalid_filter", err(api("GET", "/v1/feed?date_from=2026-12-10&date_to=2026-12-01", token=ravi.token)) == (400, "invalid_filter"))
     page = data(api("GET", "/v1/feed", token=kabir.token)) or {}
     if page.get("next_cursor"):
@@ -489,10 +503,10 @@ def scenario() -> int:
     counts = (data(api("GET", f"/v1/journeys/{a_j}", token=asha.token)) or {}).get("counts", {})
     check("counters: 1 like, 1 comment, 1 share", counts == {"likes": 1, "comments": 1, "shares": 1}, counts)
     check("Kabir hides Asha's trip", api("POST", f"/v1/journeys/{a_j}/hide", token=kabir.token)[0] == 200)
-    check("...it leaves his feed", a_j not in [i["journey"]["id"] for i in (data(api("GET", f"/v1/feed?to_place_id={RISHIKESH}", token=kabir.token)) or {}).get("items", [])])
+    check("...it leaves his feed", a_j not in feed_ids(kabir, f"to_place_id={RISHIKESH}"))
     check("...and his matches", a_j not in match_ids(kabir, k_j))
     api("DELETE", f"/v1/journeys/{a_j}/hide", token=kabir.token)
-    check("unhide brings it back", a_j in [i["journey"]["id"] for i in (data(api("GET", f"/v1/feed?to_place_id={RISHIKESH}", token=kabir.token)) or {}).get("items", [])])
+    check("unhide brings it back", a_j in feed_ids(kabir, f"to_place_id={RISHIKESH}"))
     check("hiding your own -> 400 cannot_hide_own", err(api("POST", f"/v1/journeys/{a_j}/hide", token=asha.token)) == (400, "cannot_hide_own"))
 
     # ------------------------------------------------------------ chat

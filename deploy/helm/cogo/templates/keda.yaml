@@ -1,0 +1,61 @@
+{{- /* KEDA: each *-worker scales on the length of its RabbitMQ queue(s). The AMQP URI comes
+from the same Secret the services read RABBITMQ_URL from. */ -}}
+{{- $workers := list }}
+{{- range $dp := include "cogo.deployables" . | fromYamlArray }}
+{{- if include "cogo.usesKeda" (dict "root" $ "cfg" $dp.cfg) }}
+{{- $workers = append $workers $dp }}
+{{- end }}
+{{- end }}
+{{- if $workers }}
+{{- $auth := include "cogo.componentName" (dict "root" . "name" "rabbitmq") }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ $auth }}
+  labels:
+    {{- include "cogo.labels" . | nindent 4 }}
+spec:
+  secretTargetRef:
+    - parameter: host
+      name: {{ required "rabbitmq.existingSecret is required" .Values.rabbitmq.existingSecret }}
+      key: {{ .Values.rabbitmq.urlKey }}
+{{- range $dp := $workers }}
+{{- $k := $dp.cfg.keda }}
+{{- $name := include "cogo.componentName" (dict "root" $ "name" $dp.name) }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cogo.componentLabels" (dict "root" $ "component" $dp.name "role" $dp.cfg.role "service" $dp.svcKey) | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $name }}
+  minReplicaCount: {{ $k.minReplicas | int }}
+  maxReplicaCount: {{ $k.maxReplicas | int }}
+  pollingInterval: {{ $k.pollingInterval | default 15 | int }}
+  cooldownPeriod: {{ $k.cooldownPeriod | default 300 | int }}
+  {{- with $.Values.hpaBehavior }}
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        {{- toYaml . | nindent 8 }}
+  {{- end }}
+  triggers:
+    {{- range $q := required (printf "services.%s.deployables.%s.keda.queues is required" $dp.svcKey $dp.name) $k.queues }}
+    - type: rabbitmq
+      name: {{ $q.name | replace "." "-" }}
+      metadata:
+        protocol: {{ $.Values.keda.rabbitmq.protocol }}
+        mode: QueueLength
+        queueName: {{ $q.name }}
+        value: {{ include "cogo.envValue" ($q.value | default $k.queueLength) | quote }}
+      authenticationRef:
+        name: {{ $auth }}
+    {{- end }}
+{{- end }}
+{{- end }}

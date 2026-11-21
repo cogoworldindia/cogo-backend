@@ -1,0 +1,169 @@
+{{- /* Optional PgBouncer (transaction pooling) between the services and Postgres.
+Migrations never go through it. See README "PgBouncer" for the asyncpg requirements. */ -}}
+{{- if .Values.pgbouncer.enabled }}
+{{- $pb := .Values.pgbouncer }}
+{{- $name := include "cogo.componentName" (dict "root" . "name" "pgbouncer") }}
+{{- $ini := include "cogo.pgbouncerIni" . }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cogo.componentLabels" (dict "root" . "component" "pgbouncer" "role" "pgbouncer") | nindent 4 }}
+data:
+  pgbouncer.ini: |
+    {{- $ini | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cogo.componentLabels" (dict "root" . "component" "pgbouncer" "role" "pgbouncer") | nindent 4 }}
+spec:
+  replicas: {{ $pb.replicas | int }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector:
+    matchLabels:
+      {{- include "cogo.selectorLabels" (dict "root" . "component" "pgbouncer") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cogo.componentLabels" (dict "root" . "component" "pgbouncer" "role" "pgbouncer") | nindent 8 }}
+      annotations:
+        checksum/config: {{ $ini | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "cogo.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.pod.securityContext | nindent 8 }}
+      terminationGracePeriodSeconds: 30
+      {{- if .Values.pod.topologySpread.enabled }}
+      topologySpreadConstraints:
+        {{- range $key := .Values.pod.topologySpread.topologyKeys }}
+        - maxSkew: {{ $.Values.pod.topologySpread.maxSkew | int }}
+          topologyKey: {{ $key }}
+          whenUnsatisfiable: {{ $.Values.pod.topologySpread.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              {{- include "cogo.selectorLabels" (dict "root" $ "component" "pgbouncer") | nindent 14 }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.pod.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.pod.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: pgbouncer
+          image: {{ printf "%s:%s" $pb.image.repository $pb.image.tag | quote }}
+          imagePullPolicy: IfNotPresent
+          # Skip the image's entrypoint (it writes config files); the config is mounted.
+          command: ["/usr/bin/pgbouncer", "/etc/pgbouncer/pgbouncer.ini"]
+          ports:
+            - name: postgres
+              containerPort: {{ $pb.port | int }}
+              protocol: TCP
+          readinessProbe:
+            tcpSocket: { port: postgres }
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: postgres }
+            periodSeconds: 10
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "{{ .Values.pod.preStopSleepSeconds | int }}"]
+          resources:
+            {{- toYaml $pb.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.pod.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/pgbouncer
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          projected:
+            defaultMode: 288  # 0440
+            sources:
+              - configMap:
+                  name: {{ $name }}
+              - secret:
+                  name: {{ required "pgbouncer.userlistSecret is required" $pb.userlistSecret }}
+                  items:
+                    - key: userlist.txt
+                      path: userlist.txt
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cogo.componentLabels" (dict "root" . "component" "pgbouncer" "role" "pgbouncer") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "cogo.selectorLabels" (dict "root" . "component" "pgbouncer") | nindent 4 }}
+  ports:
+    - name: postgres
+      port: {{ $pb.port | int }}
+      targetPort: postgres
+      protocol: TCP
+{{- if and .Values.pdb.enabled (gt ($pb.replicas | int) 1) }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cogo.componentLabels" (dict "root" . "component" "pgbouncer" "role" "pgbouncer") | nindent 4 }}
+spec:
+  maxUnavailable: {{ .Values.pdb.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "cogo.selectorLabels" (dict "root" . "component" "pgbouncer") | nindent 6 }}
+{{- end }}
+{{- end }}
+
+{{- define "cogo.pgbouncerIni" -}}
+{{- $pb := .Values.pgbouncer -}}
+{{- $pg := .Values.postgres -}}
+[databases]
+{{- range $svcKey, $svc := .Values.services }}
+{{- if and (dig "enabled" true $svc) $svc.database }}
+{{ $svc.database.name }} = host={{ $pg.host }} port={{ $pg.port | int }} dbname={{ $svc.database.name }}
+{{- end }}
+{{- end }}
+
+[pgbouncer]
+listen_addr = 0.0.0.0
+listen_port = {{ $pb.port | int }}
+unix_socket_dir =
+auth_type = {{ $pb.authType }}
+auth_file = /etc/pgbouncer/userlist.txt
+pool_mode = {{ $pb.poolMode }}
+max_client_conn = {{ $pb.maxClientConn | int }}
+default_pool_size = {{ $pb.defaultPoolSize | int }}
+max_db_connections = {{ $pb.maxDbConnections | int }}
+; Protocol-level prepared statements in transaction mode (PgBouncer >= 1.21): asyncpg
+; prepares every statement, so this must be > 0 unless the services disable their caches.
+max_prepared_statements = {{ $pb.maxPreparedStatements | int }}
+server_tls_sslmode = {{ $pb.serverTlsSslmode }}
+ignore_startup_parameters = extra_float_digits
+log_connections = 0
+log_disconnections = 0
+{{- end -}}

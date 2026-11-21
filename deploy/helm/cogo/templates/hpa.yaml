@@ -1,0 +1,31 @@
+{{- /* CPU HPAs for the gateway, every *-api and chat-ws. Workers scale with KEDA (keda.yaml). */ -}}
+{{- range $dp := include "cogo.deployables" . | fromYamlArray }}
+{{- if include "cogo.usesHpa" (dict "root" $ "cfg" $dp.cfg) }}
+{{- $as := $dp.cfg.autoscaling }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "cogo.componentName" (dict "root" $ "name" $dp.name) }}
+  labels:
+    {{- include "cogo.componentLabels" (dict "root" $ "component" $dp.name "role" $dp.cfg.role "service" $dp.svcKey) | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "cogo.componentName" (dict "root" $ "name" $dp.name) }}
+  minReplicas: {{ $as.minReplicas | int }}
+  maxReplicas: {{ $as.maxReplicas | int }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $as.targetCPUUtilizationPercentage | default 70 | int }}
+  {{- with $.Values.hpaBehavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}

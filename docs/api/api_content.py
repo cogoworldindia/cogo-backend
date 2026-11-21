@@ -674,7 +674,7 @@ WS_FRAMES: list[list[str]] = [
     ["WS-C3", "close", "1001", "Idle for 120 s (no ping)", "—", "Reconnect."],
     ["WS-C4", "close", "1009", "Frame over 16 KB", "—", "Fix the client."],
     ["WS-C5", "close", "1012 / 1013", "Server restarting / unavailable, or the client couldn't keep up", "—",
-     "Reconnect with exponential backoff, then GET /v1/conversations?since=<last seen> to catch up."],
+     "Reconnect with exponential backoff plus random jitter (every client reconnects at once after a deploy), then GET /v1/conversations?since=<last seen> to catch up."],
     ["Error codes in error frames (besides the REST error.type values)"],
     ["WS-X1", "error", "bad_frame", "Not JSON, missing type, or data isn't an object", "—", "Fix the client."],
     ["WS-X2", "error", "unknown_type", "Unknown frame type", "—", "Ignore or upgrade the app."],
@@ -684,13 +684,13 @@ WS_FRAMES: list[list[str]] = [
 # ---------------------------------------------------------------- gateway extras
 GATEWAY_EXTRA: list[list[str]] = [
     ["WebSocket"],
-    ["GW-WS", "GET (upgrade)", "/v1/ws", "exact", "chat-ws", "Token in URL checked (or first frame)", "30 / minute", "User id (IP before auth)", "Fail open"],
+    ["GW-WS", "GET (upgrade)", "/v1/ws", "exact", "chat-ws", "Token in URL checked (or first frame)", "30 / minute", "User id (IP before auth)", "Fail open", "—"],
     ["Served by the gateway itself"],
-    ["GW-H1", "GET", "/health/live · /health/ready", "exact", "(gateway)", "No", "—", "—", "Ready checks Redis"],
+    ["GW-H1", "GET", "/health/live · /health/ready", "exact", "(gateway)", "No", "—", "—", "Ready checks Redis", "—"],
     ["Never routed (examples) — all return 404"],
-    ["GW-X1", "ANY", "/.well-known/jwks.json, /health*, /metrics of upstreams", "—", "—", "—", "—", "—", "Internal only"],
-    ["GW-X2", "ANY", "/internal/*, /docs, /openapi.json", "—", "—", "—", "—", "—", "Internal only"],
-    ["GW-X3", "ANY", "/v1/api/*  (old prefix, incl. the old /v1/api/emails relay)", "—", "—", "—", "—", "—", "Removed"],
+    ["GW-X1", "ANY", "/.well-known/jwks.json, /health*, /metrics of upstreams", "—", "—", "—", "—", "—", "Internal only", "—"],
+    ["GW-X2", "ANY", "/internal/*, /docs, /openapi.json", "—", "—", "—", "—", "—", "Internal only", "—"],
+    ["GW-X3", "ANY", "/v1/api/*  (old prefix, incl. the old /v1/api/emails relay)", "—", "—", "—", "—", "—", "Removed", "—"],
 ]  # fmt: skip
 EDGE_NOTES: list[tuple[str, str]] = [
     ("Edge behaviour", ""),
@@ -701,8 +701,9 @@ EDGE_NOTES: list[tuple[str, str]] = [
     ("Headers out", "Strips hop-by-hop and Server; adds X-Content-Type-Options, X-Frame-Options, Referrer-Policy, CORP (+ HSTS in production); echoes X-Request-Id."),
     ("429 response", "Retry-After (seconds) and X-RateLimit-Limit headers; error.type = rate_limited."),
     ("Upstream errors", "Connect failure 503 upstream_unavailable · timeout 504 upstream_timeout · protocol error 502 bad_gateway (no upstream detail leaked)."),
-    ("WebSocket", "/v1/ws is proxied to chat-ws: bad URL token → handshake refused (403); rate limited → close 4429; chat-ws down → close 1013; other close codes pass through."),
-    ("CORS", "Allowlist from CORS_ALLOW_ORIGINS; allowed headers authorization, content-type, x-request-id; exposes x-request-id, retry-after."),
+    ("WebSocket", "/v1/ws is proxied to chat-ws: bad URL token → handshake refused (403); rate limited → close 4429; chat-ws down, slow, or dropping the handshake → close 1013; other close codes pass through. The URL token never appears in server logs (redacted)."),
+    ("App Check", "Routes marked Yes in the App Check column (email OTP send and verify, re-auth, connection requests, KYC actions and Places) read a Firebase App Check token from X-Firebase-AppCheck. The gateway runs in one of three modes: off; log (a missing or bad token is counted and the request passes; staging starts here); enforce (401 app_check_failed). If Firebase's keys can't be fetched, requests pass in every mode."),
+    ("CORS", "Allowlist from CORS_ALLOW_ORIGINS; allowed headers authorization, content-type, x-request-id, x-firebase-appcheck; exposes x-request-id, retry-after."),
     ("Client IP", "Taken from X-Forwarded-For only when the connecting peer is in FORWARDED_ALLOW_IPS (the load balancer in production)."),
 ]  # fmt: skip
 
@@ -711,6 +712,7 @@ ERRORS: list[list[Any]] = [
     ["Generic (any service / gateway)"],
     ["bad_request", 400, "any", "The request is malformed.", "Fix the request."],
     ["validation_error", 422, "any", "Body/path/query failed validation. error.details = [{loc, msg, type}] (inputs are never echoed).", "Show field errors from details[].loc."],
+    ["invalid_text", 400, "any", "A text value (body, query or path) contains a character Postgres can't store, such as NUL (\\u0000).", "Strip control characters from user input before sending."],
     ["unauthorized", 401, "any", "Authentication required.", "Sign in."],
     ["forbidden", 403, "any", "Authenticated but not allowed.", "—"],
     ["not_found", 404, "any", "Resource or route doesn't exist, or is hidden from you (blocked, deleted, moderated).", "—"],
@@ -735,6 +737,7 @@ ERRORS: list[list[Any]] = [
     ["refresh_token_reused", 401, "auth", "A rotated (old) refresh token was replayed; the session was revoked as a precaution.", "Sign in again; check for concurrent refreshes in the client."],
     ["invalid_service_token", 401, "internal", "Service-to-service token invalid (internal endpoints only).", "— (not seen by apps)"],
     ["service_not_allowed", 403, "internal", "A valid service token from a caller that isn't allowed.", "— (not seen by apps)"],
+    ["app_check_failed", 401, "gateway", "App Check is enforced and the X-Firebase-AppCheck header is missing or invalid. Only on the App Check routes: email OTP send and verify, re-auth, connection requests, KYC actions and Places (Gateway Routes sheet, App Check column). details = missing | malformed | algorithm | unknown_key | expired | invalid.", "Fetch a fresh App Check token from the Firebase SDK and retry once; send it on every call to these routes."],
     ["Sign-in"],
     ["otp_cooldown", 429, "auth", "A code was sent to this email less than 60 s ago.", "Wait Retry-After seconds."],
     ["otp_daily_limit", 429, "auth", "Too many codes for this email today.", "Try tomorrow / another method."],
@@ -881,6 +884,7 @@ BASICS: list[tuple[str, str]] = [
     ("Auth", "Authorization: Bearer <access_token> (EdDSA JWT, 15 min). Get tokens from /v1/auth/email/verify or /v1/auth/google; renew with /v1/auth/token/refresh."),
     ("Real time", "One WebSocket per app session: wss://<api>/v1/ws?token=<access_token> (Chat WebSocket sheet). Ping every 25 s; on reconnect, catch up with GET /v1/conversations?since=."),
     ("Push", "Register the FCM token with POST /v1/me/devices after sign-in. Each push carries data {type, route, params} for the deep link."),
+    ("App Check", "Send X-Firebase-AppCheck: <token from the Firebase App Check SDK> on email OTP send and verify, re-auth, connection requests, KYC actions and Places; sending it on every request is fine. Refresh it through the SDK when it expires; on 401 app_check_failed, get a fresh token and retry once."),
     ("Content type", "application/json for every request body and response (UTF-8)."),
     ("Envelope", '{"status":"success|error","code":<http status>,"message":str,"data":…,"error":null|{"type","request_id","details"?}}'),
     ("Lists", 'data = {"items":[…],"next_cursor":"opaque|null"}. Pass next_cursor back unchanged; it is only valid for the same list and filters.'),
@@ -888,7 +892,7 @@ BASICS: list[tuple[str, str]] = [
     ("Tracing", "Every response has X-Request-Id; send your own (8–128 chars [A-Za-z0-9._:-]) to correlate client logs."),
     ("Rate limits", "429 + Retry-After seconds. Per IP on sign-in routes, per user on authenticated routes (Gateway Routes sheet), plus service limits (requests/day, messages/min)."),
     ("Formats", "Ids: UUID (v7, time-ordered). Timestamps: ISO-8601 UTC. Dates: YYYY-MM-DD; filter dates are IST."),
-    ("Eventual consistency", "Counters, banners and block effects update through events within ~2 s. Show the optimistic state and refetch; never show an error for the lag."),
+    ("Eventual consistency", "Counters, banners and block effects update through events within ~2 s (counters are also recounted hourly). Show the optimistic state and refetch; never show an error for the lag."),
 ]  # fmt: skip
 BREAKING: list[tuple[str, str]] = [
     ("Prefix", "/v1/api/... is removed. Use /v1/auth/..., /v1/me, /v1/users/... ."),
@@ -896,4 +900,5 @@ BREAKING: list[tuple[str, str]] = [
     ("Tokens", "Access tokens expire after 15 minutes; clients must refresh. Refresh tokens rotate on every use."),
     ("Profile", "GET/PATCH /v1/me is the profile API. /v1/users/me and /v1/users/me/profile still work but are deprecated (USER-09, USER-10)."),
     ("Email", "/v1/api/emails (open relay) is removed. Email is sent only by notification-service from internal events."),
+    ("App Check (coming)", "Once the gateway enforces App Check, email OTP send and verify, re-auth, connection requests, KYC actions and Places refuse requests without a valid X-Firebase-AppCheck header (401 app_check_failed). Ship the header before then; until enforcement nothing breaks."),
 ]  # fmt: skip

@@ -1,0 +1,161 @@
+{{- /* Ingress isolation. Egress stays open: services reach Postgres, Redis, RabbitMQ, SMTP,
+FCM, Cashfree and Google APIs outside the cluster. Kubelet probes are not affected. */ -}}
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+{{- $port := include "cogo.port" . | int }}
+{{- $gateway := "" }}
+{{- $metricsPorts := list }}
+{{- range $dp := include "cogo.deployables" . | fromYamlArray }}
+{{- if eq $dp.cfg.role "gateway" }}{{ $gateway = $dp.name }}{{ end }}
+{{- with $dp.cfg.metricsPort }}{{ $metricsPorts = append $metricsPorts (. | int) }}{{ end }}
+{{- end }}
+{{- if $np.defaultDenyIngress }}
+---
+# Default deny: no pod in the namespace accepts traffic unless a policy below allows it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cogo.componentName" (dict "root" . "name" "default-deny-ingress") }}
+  labels:
+    {{- include "cogo.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+{{- end }}
+{{- if $gateway }}
+---
+# The ingress controller reaches the gateway, and nothing else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cogo.componentName" (dict "root" . "name" "allow-ingress-to-gateway") }}
+  labels:
+    {{- include "cogo.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cogo.selectorLabels" (dict "root" . "component" $gateway) | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- toYaml $np.ingressController.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml $np.ingressController.podSelector | nindent 12 }}
+      ports:
+        - { port: {{ $port }}, protocol: TCP }
+---
+# The gateway reaches the public APIs and chat-ws.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cogo.componentName" (dict "root" . "name" "allow-gateway-to-apis") }}
+  labels:
+    {{- include "cogo.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cogo.releaseSelector" . | nindent 6 }}
+    matchExpressions:
+      - { key: cogo.app/role, operator: In, values: [api, ws] }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "cogo.selectorLabels" (dict "root" . "component" $gateway) | nindent 14 }}
+      ports:
+        - { port: {{ $port }}, protocol: TCP }
+{{- end }}
+---
+# Service-to-service: any CoGo pod of this release calls the APIs' internal endpoints
+# (JWKS, /internal/*, the deletion tracker, admin actions, chat-ws -> chat-api).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cogo.componentName" (dict "root" . "name" "allow-internal-apis") }}
+  labels:
+    {{- include "cogo.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cogo.releaseSelector" . | nindent 6 }}
+      cogo.app/role: api
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "cogo.releaseSelector" . | nindent 14 }}
+      ports:
+        - { port: {{ $port }}, protocol: TCP }
+---
+# Prometheus scrapes /metrics on every CoGo pod (the gateway on its metrics port).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cogo.componentName" (dict "root" . "name" "allow-prometheus") }}
+  labels:
+    {{- include "cogo.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cogo.releaseSelector" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- toYaml $np.prometheus.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml $np.prometheus.podSelector | nindent 12 }}
+      ports:
+        - { port: {{ $port }}, protocol: TCP }
+        {{- range $p := $metricsPorts | uniq }}
+        - { port: {{ $p }}, protocol: TCP }
+        {{- end }}
+{{- if .Values.pgbouncer.enabled }}
+---
+# CoGo pods reach PgBouncer.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cogo.componentName" (dict "root" . "name" "allow-pgbouncer") }}
+  labels:
+    {{- include "cogo.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cogo.selectorLabels" (dict "root" . "component" "pgbouncer") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "cogo.releaseSelector" . | nindent 14 }}
+      ports:
+        - { port: {{ .Values.pgbouncer.port | int }}, protocol: TCP }
+{{- end }}
+{{- if and $np.defaultDenyIngress $np.allowCertManagerSolver }}
+---
+# cert-manager HTTP-01: the ingress controller must reach the solver pods it creates here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cogo.componentName" (dict "root" . "name" "allow-acme-solver") }}
+  labels:
+    {{- include "cogo.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      acme.cert-manager.io/http01-solver: "true"
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- toYaml $np.ingressController.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml $np.ingressController.podSelector | nindent 12 }}
+      ports:
+        - { port: 8089, protocol: TCP }
+{{- end }}
+{{- end }}

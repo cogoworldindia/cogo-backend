@@ -1,0 +1,16 @@
+{{- /* The alert rules of infra/prometheus/rules/cogo.yml (a copy: files/alerts.yml; `make chart`
+checks they match). They group by `service`, which the Prometheus Operator sets from the
+Kubernetes Service name. The RabbitMQ alerts need the broker's metrics scraped as well. */ -}}
+{{- if .Values.metrics.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "cogo.componentName" (dict "root" . "name" "alerts") }}
+  labels:
+    {{- include "cogo.labels" . | nindent 4 }}
+    {{- with .Values.metrics.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- .Files.Get "files/alerts.yml" | nindent 2 }}
+{{- end }}

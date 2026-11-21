@@ -1,0 +1,32 @@
+{{- /* ClusterIP Services for the gateway, APIs and chat-ws. Workers and the scheduler get a
+headless Service only when ServiceMonitors scrape them. */ -}}
+{{- range $dp := include "cogo.deployables" . | fromYamlArray }}
+{{- $routable := include "cogo.isRoutable" $dp.cfg.role }}
+{{- if or $routable $.Values.metrics.serviceMonitor.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cogo.componentName" (dict "root" $ "name" $dp.name) }}
+  labels:
+    {{- include "cogo.componentLabels" (dict "root" $ "component" $dp.name "role" $dp.cfg.role "service" $dp.svcKey) | nindent 4 }}
+spec:
+  type: ClusterIP
+  {{- if not $routable }}
+  clusterIP: None
+  {{- end }}
+  selector:
+    {{- include "cogo.selectorLabels" (dict "root" $ "component" $dp.name) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ include "cogo.port" $ }}
+      targetPort: http
+      protocol: TCP
+    {{- with $dp.cfg.metricsPort }}
+    - name: metrics
+      port: {{ . | int }}
+      targetPort: metrics
+      protocol: TCP
+    {{- end }}
+{{- end }}
+{{- end }}

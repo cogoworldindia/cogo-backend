@@ -1,0 +1,11 @@
+apiVersion: v2
+name: cogo
+description: >-
+  CoGo backend (FastAPI microservices) on Kubernetes. Postgres, Redis and RabbitMQ are
+  external (managed); the chart deploys the APIs, workers, scheduler, chat-ws, the gateway,
+  migrations, autoscaling (HPA, KEDA), network policies and an optional PgBouncer.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.29.0-0"
+keywords: [cogo, fastapi, keda]

@@ -134,10 +134,19 @@ make up                           # after code changes: rebuilds only what chang
 docker compose --env-file .env --env-file .env.secrets up -d --build user-service   # one service
 make down                         # stop, keep data
 make clean                        # stop and DELETE all local data (fresh databases next time)
-make obs-up                       # Jaeger :16686, Prometheus :9090, Grafana :3001
+make obs-up                       # Jaeger :16686, Prometheus :9090 (alerts), Grafana :3001 (dashboards)
 make contracts                    # regenerate contracts/ (OpenAPI + event JSON Schemas) after an API change
 make api-docs                     # ...and the API workbook (docs/api/CoGo-API-Reference.xlsx)
+make seed                         # 50 users with journeys, connections and chats, through the API
+make dlq                          # dead-letter queue depths; fails if any holds a message
+make explain                      # EXPLAIN ANALYZE of the feed and matches queries on the current data
+make chart                        # lint the staging Helm chart and validate its manifests (kubeconform)
+make fuzz                         # Schemathesis on every public route (after make load-up); fails on any 5xx
 ```
+
+Observability: `make obs-up` provisions three Grafana dashboards (services, events, product;
+regenerate them with `python3 infra/grafana/dashboards.py`) and loads the alert rules in
+`infra/prometheus/rules/cogo.yml` into Prometheus (Status → Rules, Alerts).
 
 ## 6. Run one service natively (hot reload)
 
@@ -197,11 +206,11 @@ cd services/auth && uv run pytest -q -k refresh    # one project, filtered
 
 | Project | What the tests cover |
 |---|---|
-| libs/common | Error envelope, request ids, token verification, JWKS caching/rotation, outbox relay against real Postgres + RabbitMQ (including unroutable messages and concurrent relays) |
+| libs/common | Error envelope, request ids, token verification, JWKS caching/rotation, outbox relay against real Postgres + RabbitMQ (including unroutable messages and concurrent relays); App Check tokens; maintenance purges; log redaction and tracebacks without locals; Redis bursts past the pool; Postgres without prepared statements |
 | services/auth | OTP limits/lockout/concurrency, account linking both ways, refresh rotation + reuse detection, logout(-all), Firebase token rules, migrations |
 | services/user | IDOR impossibility, public projection, PATCH semantics/validation, idempotent event consumption, DLQ for poison messages |
 | services/notification | Template escaping, dedupe, expiry, retry vs dead-letter, real SMTP delivery to Mailpit |
-| services/api-gateway | Route allowlist, raw-path traversal, per-IP/per-user limits, body caps, upstream failure mapping, CORS, header hygiene |
+| services/api-gateway | Route allowlist, raw-path traversal, per-IP/per-user limits, body caps, upstream failure mapping, CORS, header hygiene, App Check modes, WebSocket proxy failures (down, dropped handshake) |
 | services/journey | Journey rules and lifecycle, feed ranking and filters, engagement, share pages, Places; matching end to end (scores, mutual eligibility, blocks, hides, moderation, push cap, paging, concurrent recomputes, the sweeper) |
 | services/social | Follows, blocks, reports and auto-hide |
 | services/chat | Masking (Indian phone formats, emails, links), every request rule and race, accept as one transaction, unread counts under concurrent send/read, receipts, mute, clear, block and journey consumers; chat-ws on a real server (auth, presence, chat both ways, typing, receipts, idle close) |
@@ -215,6 +224,31 @@ recomputes (serial and with 8 workers) and writes the report with the candidate 
 ```bash
 cd services/journey && PYTHONPATH=. uv run python scripts/perf_matching.py --journeys 100000 --out ../../docs/perf
 ```
+
+**Feed load check.** The same seed at 10k, 30k and 100k journeys, timing the feed query (it
+ranks every candidate, so its cost grows with them) into `docs/perf/feed.md`:
+
+```bash
+cd services/journey && PYTHONPATH=. uv run python scripts/perf_feed.py --out ../../docs/perf
+```
+
+**Load tests (k6, spec §12).** k6 runs in Docker (`grafana/k6:1.3.0`, capped at `K6_MEMORY`,
+3g) against the local stack. Results and per-process capacity: `docs/perf/load.md`.
+
+```bash
+make load-up          # the stack without rate limits, 4 h tokens, extra workers standing in for replicas
+make load-seed        # 200 users, 2 journeys each, pairs connected with a chat; writes loadtest/.seed.json
+make load-feed        # feed scroll, RATE=200 iterations/s for DURATION=2m (p95 < 300 ms)
+make load-journeys    # RATE=500 journeys/min, time from POST to a filled match banner (p95 < 10 s)
+make load-ws          # SOCKETS=1000 sockets, RATE=50 messages/s, socket-to-socket delivery (p95 < 500 ms)
+make load-soak        # every flow at once for DURATION=1h, then the DLQ check
+make up               # back to normal limits and tokens afterwards
+```
+
+Rates and sizes are environment variables (`RATE=100 DURATION=30s make load-feed`). Don't push
+`SOCKETS` much past 3000 on a laptop: every k6 virtual user costs memory (10k sockets is a
+staging run). The seed's tokens last 4 hours; after that, `make load-seed` signs the users in
+again.
 
 ## 9. Working across the repos
 
@@ -285,6 +319,9 @@ verifier, a database, Alembic, an event consumer and tests). Then:
 | A socket closes with `1013` or `1012` | chat-ws is unreachable or restarting: reconnect with backoff, then `GET /v1/conversations?since=` |
 | No pushes in dev | `PUSH_PROVIDER=mock` records them instead: `GET /v1/me/devices/test-pushes` (after `POST /v1/me/devices`) |
 | A Matches banner stays "Finding matches…" | The scheduler sweep re-runs `pending` journeys after a minute. If it persists: `make logs-journey-service` and check the `journey-service.dlq` depth |
+| Load test: every request 401 | The seed's 4 h tokens expired: `make load-seed` again |
+| `metrics_port_in_use` warning from the gateway | Expected with `GATEWAY_WEB_CONCURRENCY` above 1 (`make load-up`): only the first worker exports metrics |
+| `make dlq` fails | A message was dead-lettered. Read it in the RabbitMQ UI (Queues → `<name>.dlq` → Get messages), fix the cause, then move it back with a shovel or purge it |
 | Start completely fresh | `make clean && make up` (**deletes** local Postgres/Redis/RabbitMQ data) |
 
 ## 12. Before production
@@ -296,8 +333,11 @@ verifier, a database, Alembic, an event consumer and tests). Then:
   1. Publish the old public key via `JWT_ADDITIONAL_PUBLIC_KEY_FILES`.
   2. Switch the private key.
   3. Drop the old public key after 15 minutes.
-- Use managed Postgres (backups, PITR, read replicas) behind PgBouncer
-  (`statement_cache_size=0`). Size pools so `replicas × (DB_POOL_SIZE + DB_MAX_OVERFLOW)` fits.
+- Deploy with the Helm chart in `deploy/helm/cogo` (its README lists what to fill in).
+- Use managed Postgres (backups, PITR, read replicas). Size pools so
+  `replicas × (DB_POOL_SIZE + DB_MAX_OVERFLOW)` fits its `max_connections`; past that, enable
+  the chart's PgBouncer (1.21+, `max_prepared_statements` on). Behind a pooler without
+  prepared-statement support, set `DB_PREPARED_STATEMENTS=false`.
 - Run separate Redis instances for sessions (persistent, `noeviction`, non-cluster) and for
   counters/cache.
 - Use a managed RabbitMQ cluster (quorum queues need 3 nodes for HA), and alert on DLQ depth.
@@ -326,3 +366,11 @@ verifier, a database, Alembic, an event consumer and tests). Then:
   - Alert on dead letters in `*-service.dlq`.
 - Run several replicas per service. Scrape `/metrics` (gateway on `:9100`, which must not be
   public) and ship traces through `OTEL_EXPORTER_OTLP_ENDPOINT`.
+- Load the alert rules (`infra/prometheus/rules/cogo.yml`) and the dashboards into the
+  cluster's Prometheus and Grafana, and route the alerts to someone.
+- Errors: set `SENTRY_DSN` (and `SENTRY_TRACES_SAMPLE_RATE` if you want traces there). Events
+  carry no PII, request bodies or frame locals.
+- App Check (spec §9): set `APP_CHECK_PROJECT_NUMBER` and `APP_CHECK_MODE=log` first. Once the
+  apps send `X-Firebase-AppCheck` and `gateway_app_check_total{result!="ok"}` is near zero for
+  current app versions, switch to `enforce` (email OTP send and verify, re-auth, connection requests, KYC
+  actions and Places then refuse requests without a valid token).

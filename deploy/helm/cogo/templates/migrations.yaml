@@ -1,0 +1,68 @@
+{{- /* `alembic upgrade head` per service before install and every upgrade (old pods keep
+running against the new schema, so migrations must be expand/contract: docs/SETUP.md §7).
+Like the compose *-migrate containers: only DATABASE_URL, straight to Postgres. */ -}}
+{{- if .Values.migrations.enabled }}
+{{- $m := .Values.migrations }}
+{{- range $svcKey, $svc := .Values.services }}
+{{- if and (dig "enabled" true $svc) $svc.migrations $svc.database }}
+{{- $component := printf "%s-migrate" $svcKey }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "cogo.componentName" (dict "root" $ "name" $component) }}
+  labels:
+    {{- include "cogo.componentLabels" (dict "root" $ "component" $component "role" "migrate" "service" $svcKey) | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ $m.backoffLimit | int }}
+  activeDeadlineSeconds: {{ $m.activeDeadlineSeconds | int }}
+  ttlSecondsAfterFinished: {{ $m.ttlSecondsAfterFinished | int }}
+  template:
+    metadata:
+      labels:
+        {{- include "cogo.componentLabels" (dict "root" $ "component" $component "role" "migrate" "service" $svcKey) | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      # The chart's ServiceAccount doesn't exist yet on a first install's pre-install hook.
+      automountServiceAccountToken: false
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml $.Values.pod.securityContext | nindent 8 }}
+      {{- with $.Values.pod.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.pod.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ include "cogo.image" (dict "root" $ "svc" $svc) | quote }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          args: ["alembic", "upgrade", "head"]
+          env:
+            {{- include "cogo.dbPasswordEnv" (dict "svc" $svc) | nindent 12 }}
+            - name: DATABASE_URL
+              value: {{ include "cogo.databaseUrl" (dict "root" $ "db" $svc.database "direct" true) | quote }}
+          resources:
+            {{- toYaml $m.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml $.Values.pod.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: {{ $.Values.pod.tmpSizeLimit }}
+{{- end }}
+{{- end }}
+{{- end }}

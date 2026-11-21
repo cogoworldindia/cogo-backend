@@ -1,0 +1,4 @@
+{{- range $dp := include "cogo.deployables" . | fromYamlArray }}
+---
+{{ include "cogo.deployment" (dict "root" $ "dp" $dp) }}
+{{- end }}

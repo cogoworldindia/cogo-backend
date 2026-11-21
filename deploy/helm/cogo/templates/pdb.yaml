@@ -1,0 +1,19 @@
+{{- /* A PodDisruptionBudget for every deployable that never runs below two replicas. */ -}}
+{{- if .Values.pdb.enabled }}
+{{- range $dp := include "cogo.deployables" . | fromYamlArray }}
+{{- if gt (include "cogo.minReplicas" (dict "root" $ "cfg" $dp.cfg) | int) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "cogo.componentName" (dict "root" $ "name" $dp.name) }}
+  labels:
+    {{- include "cogo.componentLabels" (dict "root" $ "component" $dp.name "role" $dp.cfg.role "service" $dp.svcKey) | nindent 4 }}
+spec:
+  maxUnavailable: {{ $.Values.pdb.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "cogo.selectorLabels" (dict "root" $ "component" $dp.name) | nindent 6 }}
+{{- end }}
+{{- end }}
+{{- end }}

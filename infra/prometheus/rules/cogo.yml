@@ -1,0 +1,102 @@
+# CoGo alerts (spec §11: an alert when a DLQ is above 0; dashboards for queues, outbox,
+# projection lag, sockets, FCM, Places). Thresholds are starting points for staging.
+groups:
+  - name: cogo-availability
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.service }} isn't answering /metrics"
+      - alert: GatewayErrorRate
+        expr: |
+          sum(rate(gateway_request_duration_seconds_count{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(gateway_request_duration_seconds_count[5m])), 1e-9) > 0.01
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "More than 1% of requests fail with 5xx at the gateway"
+      - alert: ReadLatencyHigh
+        # spec §11: feed, matches, conversation list, message history p95 < 300 ms
+        expr: |
+          histogram_quantile(0.95, sum by (le, http_route) (rate(http_server_request_duration_seconds_bucket{
+            http_route=~"/v1/feed|/v1/journeys/\\{journey_id\\}/matches|/v1/conversations|/v1/conversations/\\{conversation_id\\}/messages"}[5m]))) > 0.3
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "p95 of {{ $labels.http_route }} is above 300 ms"
+
+  - name: cogo-events
+    rules:
+      - alert: DeadLetters
+        expr: rabbitmq_detailed_queue_messages{queue=~".*\\.dlq"} > 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $value }} dead-lettered message(s) in {{ $labels.queue }}"
+          runbook: "Read them in the RabbitMQ UI; fix the cause; shovel back to the queue."
+      - alert: QueueWithoutConsumers
+        expr: rabbitmq_detailed_queue_consumers{queue!~".*\\.dlq"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Nothing consumes {{ $labels.queue }} (workers down or not subscribed)"
+      - alert: QueueBacklog
+        expr: rabbitmq_detailed_queue_messages{queue!~".*\\.dlq"} > 1000
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.queue }} has {{ $value }} waiting messages (KEDA should be scaling)"
+      - alert: OutboxStuck
+        expr: max by (service) (outbox_oldest_pending) > 60
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.service }} has an outbox row unpublished for over a minute"
+      - alert: ProjectionLag
+        # spec §1A.3: projections are eventually consistent, target lag < 2 s
+        expr: |
+          histogram_quantile(0.95, sum by (le, service) (rate(event_consume_lag_seconds_bucket[5m]))) > 2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.service }}: p95 event lag above 2 s"
+      - alert: EventHandlerFailures
+        expr: sum by (service, type) (rate(events_handled_total{outcome!="ok"}[10m])) > 0
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.service }} keeps failing on {{ $labels.type }}"
+
+  - name: cogo-product
+    rules:
+      - alert: PushFailures
+        expr: |
+          sum(rate(push_deliveries_total{status="failed"}[15m]))
+            / clamp_min(sum(rate(push_deliveries_total{status=~"sent|failed"}[15m])), 1e-9) > 0.05
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "More than 5% of pushes fail (FCM credentials? APNs key?)"
+      - alert: AccountDeletionOverdue
+        # spec §7: alert if a deletion isn't complete after 24 h
+        expr: max(account_deletions_overdue) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} account deletion(s) incomplete after 24 h"
+      - alert: PlacesSpendHigh
+        expr: sum(increase(places_api_requests_total[1h])) > 20000
+        labels: { severity: warning }
+        annotations:
+          summary: "Google Places calls in the last hour: {{ $value }} (cache, rate limits?)"
+      - alert: AppCheckFailing
+        # spec §9: log first, then enforce. Watch this before switching to enforce.
+        expr: |
+          sum(rate(gateway_app_check_total{result=~"failed_.*"}[30m]))
+            / clamp_min(sum(rate(gateway_app_check_total[30m])), 1e-9) > 0.02
+        for: 30m
+        labels: { severity: info }
+        annotations:
+          summary: "More than 2% of App Check tokens fail; don't enforce yet"

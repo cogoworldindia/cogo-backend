@@ -1,0 +1,24 @@
+{{- /* Prometheus Operator ServiceMonitors: /metrics on 8000, the gateway on its metrics port. */ -}}
+{{- if .Values.metrics.serviceMonitor.enabled }}
+{{- range $dp := include "cogo.deployables" . | fromYamlArray }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "cogo.componentName" (dict "root" $ "name" $dp.name) }}
+  labels:
+    {{- include "cogo.componentLabels" (dict "root" $ "component" $dp.name "role" $dp.cfg.role "service" $dp.svcKey) | nindent 4 }}
+    {{- with $.Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "cogo.selectorLabels" (dict "root" $ "component" $dp.name) | nindent 6 }}
+  endpoints:
+    - port: {{ ternary "metrics" "http" (not (empty $dp.cfg.metricsPort)) }}
+      path: /metrics
+      interval: {{ $.Values.metrics.serviceMonitor.interval }}
+      scrapeTimeout: {{ $.Values.metrics.serviceMonitor.scrapeTimeout }}
+{{- end }}
+{{- end }}

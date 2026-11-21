@@ -1,14 +1,36 @@
+# Local (make obs-up). In Kubernetes the Helm chart's ServiceMonitors do the same.
 global:
   scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files: ["/etc/prometheus/rules/*.yml"]
 
 scrape_configs:
-  - job_name: auth-service
-    static_configs: [{ targets: ["auth-service:8000"] }]
-  - job_name: user-service
-    static_configs: [{ targets: ["user-service:8000"] }]
-  - job_name: notification-service
-    static_configs: [{ targets: ["notification-service:8000"] }]
+  - job_name: services
+    static_configs:
+      - targets: ["auth-service:8000"]
+        labels: { service: auth-service }
+      - targets: ["user-service:8000"]
+        labels: { service: user-service }
+      - targets: ["journey-service:8000"]
+        labels: { service: journey-service }
+      - targets: ["social-service:8000"]
+        labels: { service: social-service }
+      - targets: ["chat-service:8000"]
+        labels: { service: chat-service }
+      - targets: ["chat-ws:8000"]
+        labels: { service: chat-ws }
+      - targets: ["notification-service:8000"]
+        labels: { service: notification-service }
+      - targets: ["admin-service:8000"]
+        labels: { service: admin-service }
   - job_name: api-gateway
-    static_configs: [{ targets: ["api-gateway:9100"] }]  # internal metrics port
+    static_configs:
+      - targets: ["api-gateway:9100"]  # internal metrics port (the gateway itself is public)
+        labels: { service: api-gateway }
+  # RabbitMQ: per-queue depth and consumers (DLQs included)
   - job_name: rabbitmq
+    metrics_path: /metrics/detailed
+    params:
+      family: [queue_coarse_metrics, queue_consumer_count]
     static_configs: [{ targets: ["rabbitmq:15692"] }]

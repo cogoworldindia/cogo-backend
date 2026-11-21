@@ -1,0 +1,172 @@
+# Staging, India region (Mumbai): EKS in ap-south-1 (zones ap-south-1a/b/c) or GKE in
+# asia-south1 (asia-south1-a/b/c). Layered on values.yaml:
+#
+#   helm upgrade --install cogo deploy/helm/cogo -n cogo-staging \
+#     -f deploy/helm/cogo/values-staging.yaml --set image.tag=<git sha>
+#
+# Keep Postgres, Redis, RabbitMQ, the media bucket and SES in the same region (and VPC) as
+# the cluster: latency, and personal data stays in India.
+#
+# Placeholders to replace are marked REPLACE-ME (and the example account 123456789012);
+# NOTES.txt warns while any are left.
+
+image:
+  # EKS: ECR in Mumbai. GKE: asia-south1-docker.pkg.dev/<project>/cogo
+  registry: 123456789012.dkr.ecr.ap-south-1.amazonaws.com
+
+serviceAccount:
+  annotations: {}
+    # eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/cogo-staging   # media bucket via IRSA
+    # iam.gke.io/gcp-service-account: cogo-staging@<project>.iam.gserviceaccount.com
+
+commonEnv:
+  ENV: staging               # docs off, KYC mock refused, HSTS off (production only)
+  LOG_LEVEL: INFO
+  LOG_JSON: true
+  APP_CONFIG_TTL_SECONDS: 15 # config edits in the console show up faster than production's 60 s
+  SENTRY_TRACES_SAMPLE_RATE: 0.1
+
+sentry:
+  secretName: cogo-sentry    # key SENTRY_DSN
+
+# Managed Postgres (RDS / Cloud SQL for PostgreSQL 17 with PostGIS) in the same VPC.
+postgres:
+  host: cogo-staging.REPLACE-ME.ap-south-1.rds.amazonaws.com   # or the Cloud SQL private IP
+  port: 5432
+  urlQuery: ssl=require
+  # 10 connections per replica. Worst case at max replicas: about 45 replicas x 10 = 450;
+  # keep that under max_connections, or enable PgBouncer.
+  poolSize: 5
+  maxOverflow: 5
+
+# ElastiCache (TLS + AUTH token) / Memorystore. The URLs carry the token, so they come from
+# the cogo-redis Secret (keys: auth, notification, gateway, admin, journey, realtime, config).
+# Sessions (auth, admin) belong on a noeviction instance; the rest can share a cache one.
+redis:
+  existingSecret: cogo-redis
+
+# Amazon MQ for RabbitMQ or CloudAMQP (both offer Mumbai): amqps://user:pass@host:5671/vhost
+rabbitmq:
+  existingSecret: cogo-rabbitmq
+  urlKey: RABBITMQ_URL
+
+# Small sizes; the HPAs and KEDA add replicas under load.
+roles:
+  gateway:
+    resources:
+      requests: { cpu: 100m, memory: 192Mi }
+      limits:   { cpu: "1", memory: 384Mi }
+    autoscaling: { minReplicas: 2, maxReplicas: 4 }
+  api:
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits:   { cpu: "1", memory: 512Mi }
+    autoscaling: { minReplicas: 2, maxReplicas: 4 }
+  ws:
+    resources:
+      requests: { cpu: 100m, memory: 192Mi }
+      limits:   { cpu: "1", memory: 384Mi }
+    autoscaling: { minReplicas: 2, maxReplicas: 4 }
+  worker:
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits:   { cpu: "1", memory: 512Mi }
+    keda: { minReplicas: 1, maxReplicas: 3 }
+  scheduler:
+    resources:
+      requests: { cpu: 50m, memory: 192Mi }
+      limits:   { cpu: 500m, memory: 384Mi }
+
+services:
+  gateway:
+    env:
+      CORS_ALLOW_ORIGINS: []          # add the staging web origin if a browser client calls the API
+      ADMIN_ALLOWED_CIDRS: []         # REPLACE-ME: office / VPN egress CIDRs; empty = console closed
+      # Pod CIDR of the ingress-nginx pods (EKS VPC CNI: the VPC CIDR; GKE: the pod range).
+      FORWARDED_ALLOW_IPS: 10.0.0.0/8
+      APP_CHECK_MODE: log             # spec: log first, enforce once clients send tokens
+      APP_CHECK_PROJECT_NUMBER: REPLACE-ME   # the staging Firebase project number
+
+  auth:
+    env:
+      FIREBASE_PROJECT_ID: ""         # REPLACE-ME: the staging Firebase project id (empty: Google sign-in off)
+
+  user:
+    env:
+      MEDIA_BUCKET: cogo-staging-media
+      MEDIA_REGION: ap-south-1        # GKE + GCS: MEDIA_S3_ENDPOINT=https://storage.googleapis.com, HMAC keys
+      MEDIA_PUBLIC_BASE_URL: https://media.staging.cogo.app
+      KYC_PROVIDER: cashfree
+      KYC_CASHFREE_BASE_URL: https://sandbox.cashfree.com/verification
+      # https app link on a host that serves /.well-known/assetlinks.json (the gateway does)
+      KYC_RETURN_URL: https://api.staging.cogo.app/kyc/return
+      IMAGE_MODERATION_PROVIDER: google
+    deployables:
+      user-api:
+        resources:
+          requests: { cpu: 100m, memory: 320Mi }   # boto3 + Vision client
+          limits:   { cpu: "1", memory: 640Mi }
+
+  journey:
+    env:
+      PLACES_PROVIDER: google
+      PUBLIC_WEB_BASE_URL: https://api.staging.cogo.app   # /j/{id} is served through the gateway
+    deployables:
+      # The feed is the heaviest read: ~13 ms of CPU per page at 200 rps in the M8 load test
+      # (docs/perf/load.md), about 3 cores for §12's feed scroll. Requests close to real use,
+      # so the HPA (70% of the request) and the scheduler see it.
+      journey-api:
+        resources:
+          requests: { cpu: 500m, memory: 320Mi }
+          limits:   { cpu: "1", memory: 640Mi }
+        autoscaling: { minReplicas: 2, maxReplicas: 8 }
+      journey-worker:
+        keda: { minReplicas: 1, maxReplicas: 4 }
+
+  notification:
+    env:
+      PUSH_PROVIDER: fcm
+      SMTP_HOST: email-smtp.ap-south-1.amazonaws.com
+      SMTP_PORT: 587
+      SMTP_STARTTLS: true
+      MAIL_FROM: CoGo Staging <no-reply@staging.cogo.app>
+    deployables:
+      notification-api:
+        autoscaling: { minReplicas: 1, maxReplicas: 3 }
+
+  social:
+    deployables:
+      social-api:
+        autoscaling: { minReplicas: 1, maxReplicas: 3 }
+
+  admin:
+    deployables:
+      admin-api:
+        autoscaling: { minReplicas: 1, maxReplicas: 2 }
+
+ingress:
+  className: nginx
+  hosts: [api.staging.cogo.app]
+  tls:
+    enabled: true
+    secretName: cogo-staging-api-tls
+    clusterIssuer: letsencrypt-prod
+
+networkPolicy:
+  ingressController:
+    namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+    podSelector: { matchLabels: { app.kubernetes.io/name: ingress-nginx } }
+  prometheus:
+    namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } }
+    podSelector: { matchLabels: { app.kubernetes.io/name: prometheus } }
+
+metrics:
+  serviceMonitor:
+    enabled: true                     # kube-prometheus-stack in "monitoring"
+    labels: { release: kube-prometheus-stack }
+  prometheusRule:
+    enabled: true
+    labels: { release: kube-prometheus-stack }
+
+pgbouncer:
+  enabled: false                      # pool sizes above fit; see README before turning it on

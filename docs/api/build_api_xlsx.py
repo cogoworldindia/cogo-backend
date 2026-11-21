@@ -214,10 +214,23 @@ def limit_text(route: Any, service_limit: str) -> str:
 # --------------------------------------------------------------------------- service sheets
 def auth_text(route: Any, path: str) -> str:
     if route is not None and route.auth:
-        return "Bearer access token"
-    if route is not None and route.admin_network:  # admin-service: opaque admin sessions
-        return "None (admin networks only)" if path == "/admin/auth/login" else "Admin session (admin networks only)"
-    return "None"
+        text = "Bearer access token"
+    elif route is not None and route.admin_network:  # admin-service: opaque admin sessions
+        text = "None (admin networks only)" if path == "/admin/auth/login" else "Admin session (admin networks only)"
+    else:
+        text = "None"
+    if route is not None and route.app_check:
+        text += "\n+ App Check token (X-Firebase-AppCheck)"
+    return text
+
+
+APP_CHECK_ERROR = "401 app_check_failed (when the gateway enforces App Check)"
+
+
+def errors_text(route: Any, errors: str) -> str:
+    if route is not None and route.app_check:
+        return f"{errors}\n{APP_CHECK_ERROR}" if errors else APP_CHECK_ERROR
+    return errors or "—"
 
 
 SERVICE_HEADERS = ["ID", "Method", "Path", "Parameters (path · query)", "Summary", "Auth", "Request body (schema)",
@@ -250,7 +263,7 @@ for svc in C.SERVICES:
         rows.append([e["id"], e["method"], e["path"], facts["params"], e["summary"],
                      auth_text(route, e["path"]),
                      facts["req_schema"], e["req"], facts["success"], facts["resp_schema"], e["resp"],
-                     e["errors"] or "—", limit_text(route, e["limit"]), e["notes"]])  # fmt: skip
+                     errors_text(route, e["errors"]), limit_text(route, e["limit"]), e["notes"]])  # fmt: skip
     if C.INTERNAL.get(key):
         rows.append(["Internal and web endpoints (internal: service tokens only, never routed by the gateway)"])
         for e in C.INTERNAL[key]:
@@ -301,17 +314,18 @@ for n, route in enumerate(GW.ROUTES, 1):
                     "Yes (Bearer)" if route.auth else ("No · admin networks only" if route.admin_network else "No"),
                     route.limit.replace("/", " / "),
                     "User id" if route.limit_by == "user" else "Client IP",
-                    "Fail open" if route.fail_open else "Fail closed (503)"])  # fmt: skip
+                    "Fail open" if route.fail_open else "Fail closed (503)",
+                    "Yes" if route.app_check else "—"])  # fmt: skip
 gw_rows += C.GATEWAY_EXTRA
 ws = sheet("Gateway Routes", "api-gateway  —  public route table",
            "The single public entry point (dev: http://localhost:8000). Generated from services/api-gateway/app/routes.py. Public paths equal upstream paths. Authenticated routes are verified at the edge (EdDSA via JWKS) and again by the service. Limits are sliding windows in Redis, shared by all gateway replicas.",
-           ["ID", "Method(s)", "Public path", "Match", "Upstream", "Auth at edge", "Rate limit", "Limited per", "If Redis is down"],
-           [9, 24, 52, 9, 20, 18, 13, 18, 20], gw_rows, method_col=2, mono_cols=(3,))  # fmt: skip
+           ["ID", "Method(s)", "Public path", "Match", "Upstream", "Auth at edge", "Rate limit", "Limited per", "If Redis is down", "App Check"],
+           [9, 24, 52, 9, 20, 18, 13, 18, 20, 11], gw_rows, method_col=2, mono_cols=(3,))  # fmt: skip
 base = 5 + len(gw_rows) + 1
 for i, (k, v) in enumerate(C.EDGE_NOTES):
     a, b = ws.cell(row=base + i, column=1, value=k), ws.cell(row=base + i, column=3, value=v)
     ws.merge_cells(start_row=base + i, start_column=1, end_row=base + i, end_column=2)
-    ws.merge_cells(start_row=base + i, start_column=3, end_row=base + i, end_column=9)
+    ws.merge_cells(start_row=base + i, start_column=3, end_row=base + i, end_column=10)
     a.font = Font(name=FONT, size=10, bold=True, color=NAVY if i == 0 else "000000", underline="single" if i == 0 else None)
     b.font = Font(name=FONT, size=10)
     a.alignment = b.alignment = WRAP_TOP

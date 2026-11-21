@@ -1,0 +1,64 @@
+{{- /* The gateway is the only public entry point. Two Ingresses on the same host(s): one for
+everything, one for the WebSocket path, so only /v1/ws gets long proxy timeouts
+(ingress-nginx applies annotations per Ingress). */ -}}
+{{- if .Values.ingress.enabled }}
+{{- $gateway := "" }}
+{{- range $dp := include "cogo.deployables" . | fromYamlArray }}
+{{- if eq $dp.cfg.role "gateway" }}{{ $gateway = $dp.name }}{{ end }}
+{{- end }}
+{{- if not $gateway }}{{ fail "ingress.enabled needs an enabled deployable with role gateway" }}{{ end }}
+{{- $ing := .Values.ingress }}
+{{- $service := include "cogo.componentName" (dict "root" . "name" $gateway) }}
+{{- $hosts := required "ingress.hosts needs at least one host" $ing.hosts }}
+{{- range $kind := list "api" "ws" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ ternary $service (printf "%s-ws" $service) (eq $kind "api") }}
+  labels:
+    {{- include "cogo.componentLabels" (dict "root" $ "component" $gateway "role" "gateway" "service" "gateway") | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: {{ $ing.bodySize | quote }}
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: {{ $ing.timeouts.connect | int | quote }}
+    {{- if eq $kind "api" }}
+    nginx.ingress.kubernetes.io/proxy-read-timeout: {{ $ing.timeouts.read | int | quote }}
+    nginx.ingress.kubernetes.io/proxy-send-timeout: {{ $ing.timeouts.send | int | quote }}
+    {{- else }}
+    nginx.ingress.kubernetes.io/proxy-read-timeout: {{ $ing.websocket.timeoutSeconds | int | quote }}
+    nginx.ingress.kubernetes.io/proxy-send-timeout: {{ $ing.websocket.timeoutSeconds | int | quote }}
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    {{- end }}
+    {{- if $ing.tls.enabled }}
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    {{- /* Only one Ingress may own the certificate, or cert-manager makes two Certificates. */}}
+    {{- if and $ing.tls.clusterIssuer (eq $kind "api") }}
+    cert-manager.io/cluster-issuer: {{ $ing.tls.clusterIssuer | quote }}
+    {{- end }}
+    {{- end }}
+    {{- with $ing.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ $ing.className }}
+  {{- if $ing.tls.enabled }}
+  tls:
+    - hosts:
+        {{- toYaml $hosts | nindent 8 }}
+      secretName: {{ required "ingress.tls.secretName is required" $ing.tls.secretName }}
+  {{- end }}
+  rules:
+    {{- range $host := $hosts }}
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - path: {{ ternary "/" $ing.websocket.path (eq $kind "api") }}
+            pathType: {{ ternary "Prefix" "Exact" (eq $kind "api") }}
+            backend:
+              service:
+                name: {{ $service }}
+                port:
+                  name: http
+    {{- end }}
+{{- end }}
+{{- end }}

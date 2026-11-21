@@ -317,6 +317,7 @@ verifier, a database, Alembic, an event consumer and tests). Then:
 | Tests fail with Docker errors | testcontainers needs the Docker socket. Run `docker info`. On rootless or remote Docker, set `DOCKER_HOST` |
 | A socket closes with `4401` | The access token in `?token=` is invalid or expired (15 min). Refresh, then reconnect |
 | A socket closes with `1013` or `1012` | chat-ws is unreachable or restarting: reconnect with backoff, then `GET /v1/conversations?since=` |
+| A socket closes with `1011` (keepalive ping timeout) | The client didn't answer the server's 20 s protocol ping within 20 s (app suspended, network gone, or the machine stalled under load). Reconnect |
 | No pushes in dev | `PUSH_PROVIDER=mock` records them instead: `GET /v1/me/devices/test-pushes` (after `POST /v1/me/devices`) |
 | A Matches banner stays "Finding matches…" | The scheduler sweep re-runs `pending` journeys after a minute. If it persists: `make logs-journey-service` and check the `journey-service.dlq` depth |
 | Load test: every request 401 | The seed's 4 h tokens expired: `make load-seed` again |

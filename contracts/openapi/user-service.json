@@ -77,6 +77,26 @@
         "title": "CoverOut",
         "type": "object"
       },
+      "DeletionOut": {
+        "properties": {
+          "deleted_at": {
+            "format": "date-time",
+            "title": "Deleted At",
+            "type": "string"
+          },
+          "status": {
+            "const": "deleting",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "deleted_at"
+        ],
+        "title": "DeletionOut",
+        "type": "object"
+      },
       "EmailStartIn": {
         "additionalProperties": false,
         "properties": {
@@ -125,6 +145,38 @@
           "otp"
         ],
         "title": "EmailVerifyIn",
+        "type": "object"
+      },
+      "Envelope_DeletionOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/DeletionOut"
+          },
+          "error": {
+            "title": "Error",
+            "type": "null"
+          },
+          "message": {
+            "default": "OK",
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "const": "success",
+            "default": "success",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "Envelope[DeletionOut]",
         "type": "object"
       },
       "Envelope_EmailStartOut_": {
@@ -1746,6 +1798,54 @@
       }
     },
     "/v1/me": {
+      "delete": {
+        "description": "Spec \u00a76.2: deleting the account needs a fresh OTP re-confirm. auth-service issues a\n5-minute token for it (`POST /v1/auth/reauth/verify`); every service then cleans up\nits own data from `user.deleted` (spec \u00a77).",
+        "operationId": "delete_me_v1_me_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Reauth-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Reauth-Token"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_DeletionOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Me",
+        "tags": [
+          "users"
+        ]
+      },
       "get": {
         "operationId": "get_me_v1_me_get",
         "responses": {

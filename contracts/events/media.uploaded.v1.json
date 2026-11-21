@@ -1,0 +1,35 @@
+{
+  "description": "user-service -> `media.uploaded` (to itself): an upload was confirmed; image\nmoderation runs off the request path (spec \u00a75.10).",
+  "properties": {
+    "kind": {
+      "enum": [
+        "avatar",
+        "cover"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "media_id": {
+      "format": "uuid",
+      "title": "Media Id",
+      "type": "string"
+    },
+    "object_key": {
+      "title": "Object Key",
+      "type": "string"
+    },
+    "owner_id": {
+      "format": "uuid",
+      "title": "Owner Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "media_id",
+    "owner_id",
+    "kind",
+    "object_key"
+  ],
+  "title": "MediaUploaded",
+  "type": "object"
+}

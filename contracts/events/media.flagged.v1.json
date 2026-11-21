@@ -1,0 +1,43 @@
+{
+  "description": "user-service -> `media.flagged`: SafeSearch flagged an image; user-service already\nswapped it out, social-service opens a system report (spec \u00a75.10).",
+  "properties": {
+    "kind": {
+      "enum": [
+        "avatar",
+        "cover"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "labels": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Labels",
+      "type": "object"
+    },
+    "media_id": {
+      "format": "uuid",
+      "title": "Media Id",
+      "type": "string"
+    },
+    "media_url": {
+      "title": "Media Url",
+      "type": "string"
+    },
+    "owner_id": {
+      "format": "uuid",
+      "title": "Owner Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "media_id",
+    "owner_id",
+    "kind",
+    "media_url",
+    "labels"
+  ],
+  "title": "MediaFlagged",
+  "type": "object"
+}

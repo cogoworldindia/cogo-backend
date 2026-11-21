@@ -152,6 +152,70 @@
         "title": "Envelope[NoneType]",
         "type": "object"
       },
+      "Envelope_ReauthSendResponse_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ReauthSendResponse"
+          },
+          "error": {
+            "title": "Error",
+            "type": "null"
+          },
+          "message": {
+            "default": "OK",
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "const": "success",
+            "default": "success",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "Envelope[ReauthSendResponse]",
+        "type": "object"
+      },
+      "Envelope_ReauthToken_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ReauthToken"
+          },
+          "error": {
+            "title": "Error",
+            "type": "null"
+          },
+          "message": {
+            "default": "OK",
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "const": "success",
+            "default": "success",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "Envelope[ReauthToken]",
+        "type": "object"
+      },
       "Envelope_TokenPair_": {
         "properties": {
           "code": {
@@ -224,6 +288,73 @@
           "revoked_sessions"
         ],
         "title": "LogoutAllResponse",
+        "type": "object"
+      },
+      "ReauthSendResponse": {
+        "properties": {
+          "email_hint": {
+            "title": "Email Hint",
+            "type": "string"
+          },
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "resend_after": {
+            "title": "Resend After",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expires_in",
+          "resend_after",
+          "email_hint"
+        ],
+        "title": "ReauthSendResponse",
+        "type": "object"
+      },
+      "ReauthToken": {
+        "properties": {
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "purpose": {
+            "title": "Purpose",
+            "type": "string"
+          },
+          "reauth_token": {
+            "title": "Reauth Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reauth_token",
+          "expires_in",
+          "purpose"
+        ],
+        "title": "ReauthToken",
+        "type": "object"
+      },
+      "ReauthVerifyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "pattern": "^\\d{6}$",
+            "title": "Code",
+            "type": "string"
+          },
+          "purpose": {
+            "const": "delete_account",
+            "title": "Purpose",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "purpose"
+        ],
+        "title": "ReauthVerifyRequest",
         "type": "object"
       },
       "RefreshRequest": {
@@ -492,6 +623,68 @@
         "summary": "Logout All",
         "tags": [
           "tokens"
+        ]
+      }
+    },
+    "/v1/auth/reauth/email/send": {
+      "post": {
+        "operationId": "send_v1_auth_reauth_email_send_post",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ReauthSendResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Send",
+        "tags": [
+          "reauth"
+        ]
+      }
+    },
+    "/v1/auth/reauth/email/verify": {
+      "post": {
+        "operationId": "verify_v1_auth_reauth_email_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthVerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ReauthToken_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify",
+        "tags": [
+          "reauth"
         ]
       }
     },

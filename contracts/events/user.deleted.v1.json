@@ -1,0 +1,21 @@
+{
+  "description": "user-service -> `user.deleted` (spec \u00a77 choreographed deletion): every service\ndeletes or anonymises what it holds for this user. Carries nothing but the id.",
+  "properties": {
+    "deleted_at": {
+      "format": "date-time",
+      "title": "Deleted At",
+      "type": "string"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "deleted_at"
+  ],
+  "title": "UserDeleted",
+  "type": "object"
+}

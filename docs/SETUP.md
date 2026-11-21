@@ -42,13 +42,14 @@ If you already cloned without `--recursive`, run `git submodule update --init --
 | Service | URL on your machine | Notes |
 |---|---|---|
 | api-gateway | http://localhost:8000 | The **only** API endpoint clients use |
+| Admin console | http://localhost:8000/admin/ | Sign in as `ADMIN_BOOTSTRAP_EMAIL` (`.env`) with `ADMIN_BOOTSTRAP_PASSWORD` and a code from `ADMIN_BOOTSTRAP_TOTP_SECRET` (`.env.secrets`; add it to an authenticator app) |
 | Mailpit | http://localhost:8025 | Every email the stack sends lands here (OTP codes too). Nothing reaches real inboxes |
 | RabbitMQ UI | http://localhost:15672 | User `cogo`, password `RABBITMQ_PASSWORD` in `.env.secrets` |
 | Postgres | `localhost:5433` | Superuser `postgres` / `POSTGRES_PASSWORD`. Port 5433 avoids clashing with a host Postgres on 5432 |
 | Redis | `localhost:6380` | For running services natively |
 | Media store (RustFS) | http://localhost:9000 | S3-compatible; presigned uploads go here in dev |
 | RabbitMQ AMQP | `localhost:5672` | For running services natively |
-| auth-, user-, journey-, social-, notification-service | not published | Reach them through the gateway, or with `docker compose exec` |
+| auth-, user-, journey-, social-, chat-, notification-, admin-service | not published | Reach them through the gateway, or with `docker compose exec` |
 
 All ports bind to `127.0.0.1` only.
 
@@ -86,6 +87,8 @@ Settings you are most likely to change:
 | `LOG_JSON` | `true` | Set `false` for human-readable local logs |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | empty | Set `http://jaeger:4318` and run `make obs-up` to collect traces |
 | `PLACES_PROVIDER` | `mock` | `google` uses Places API (New); set `GOOGLE_PLACES_API_KEY` in `.env.secrets` |
+| `IMAGE_MODERATION_PROVIDER` | `mock` | `mock` flags test images containing `cogo-test:flag`. `google` uses Cloud Vision SafeSearch; set `GOOGLE_VISION_API_KEY` |
+| `ADMIN_ALLOWED_CIDRS` | private ranges in dev | Networks the admin console and API are reachable from (JSON list). Empty: nobody |
 | `KYC_PROVIDER` | `mock` | `mock` serves a test ID page where you pick the outcome. `cashfree` uses Cashfree Secure ID (DigiLocker); see §12 |
 | `APP_CONFIG_TTL_SECONDS` | `5` in dev (60 in production) | How often services re-read app config (spec §10) from the shared config Redis |
 | `PUSH_PROVIDER` | `mock` | `mock` records pushes (read them at `GET /v1/me/devices/test-pushes`). For `fcm`, mount the Firebase service-account JSON into notification-service and set `FCM_CREDENTIALS_FILE` to its path |
@@ -93,14 +96,22 @@ Settings you are most likely to change:
 Each service receives only the variables it needs. The `environment:` block of each service in
 `docker-compose.yml` is the definitive list.
 
-**App config** (gates, limits, matching weights: spec §10) has built-in defaults. Until
-admin-service lands (M7), override a key by hand in the shared config Redis (db 7). Services
-pick it up within `APP_CONFIG_TTL_SECONDS`. Nested objects merge, so this changes one gate:
+**App config** (gates, limits, matching weights: spec §10) is edited in the admin console
+(Config), or with `PUT /admin/config/{key}`. admin-service stores it, validates it against the
+built-in defaults, and publishes it to the shared config Redis; every service applies it at
+once, with no deploy. The client-visible part is served at `GET /v1/config`.
+
+**Admin accounts.** Dev creates one admin on first start (`ADMIN_BOOTSTRAP_*`). Anywhere else,
+create them inside the admin-service container. The command asks for a password and prints the
+authenticator secret once:
 
 ```bash
-docker exec cogo-redis-1 redis-cli -n 7 SET config:kyc '{"gates": {"create_journey": "partial"}}'
-docker exec cogo-redis-1 redis-cli -n 7 DEL config:kyc    # back to the defaults
+docker compose --env-file .env --env-file .env.secrets exec admin-service \
+  python -m app.cli create-admin --email ops@cogo.app --role moderator   # or --role admin
 ```
+
+The gateway serves `/admin/*` only to `ADMIN_ALLOWED_CIDRS` (dev: localhost and Docker
+networks); everyone else gets 404.
 
 **Trying eKYC by hand** (set your profile's name and date of birth first):
 
@@ -303,5 +314,15 @@ verifier, a database, Alembic, an event consumer and tests). Then:
   - Production calls need Cashfree's 2FA: either allow-list the egress IPs, or download their
     public key and set `KYC_CASHFREE_PUBLIC_KEY_FILE`.
   - Run one sandbox verification end to end first; RECON D38 lists what the docs leave open.
+- Admin console:
+  - Set `ADMIN_ALLOWED_CIDRS` to your office or VPN ranges, and set `GATEWAY_FORWARDED_ALLOW_IPS`
+    (above) so the gateway sees real client IPs.
+  - Don't set `ADMIN_BOOTSTRAP_*`; admin-service ignores them outside development anyway.
+  - Create admins with `python -m app.cli create-admin`.
+- Image moderation: set `IMAGE_MODERATION_PROVIDER=google` and a `GOOGLE_VISION_API_KEY`
+  restricted to the Vision API.
+- Account deletion:
+  - Alert on the `account_deletion_incomplete` log event (a deletion still pending after 24 h).
+  - Alert on dead letters in `*-service.dlq`.
 - Run several replicas per service. Scrape `/metrics` (gateway on `:9100`, which must not be
   public) and ship traces through `OTEL_EXPORTER_OTLP_ENDPOINT`.

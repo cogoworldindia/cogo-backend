@@ -1,0 +1,19 @@
+{
+  "description": "admin-service -> `config.updated` (spec \u00a710). Services also get it over the shared\nconfig Redis channel, which reaches every replica (a queue reaches only one).",
+  "properties": {
+    "key": {
+      "title": "Key",
+      "type": "string"
+    },
+    "version": {
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "key",
+    "version"
+  ],
+  "title": "ConfigUpdated",
+  "type": "object"
+}

@@ -27,7 +27,8 @@
     "template": {
       "enum": [
         "otp",
-        "kyc_email_otp"
+        "kyc_email_otp",
+        "reauth_otp"
       ],
       "title": "Template",
       "type": "string"

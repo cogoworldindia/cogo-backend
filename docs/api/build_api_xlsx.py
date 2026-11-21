@@ -45,7 +45,7 @@ def _load(name: str, path: Path) -> Any:
 GW = _load("gateway_routes", ROOT / "services/api-gateway/app/routes.py")
 EVENTS: dict[str, Any] = _load("event_schemas", ROOT / "scripts/export_event_schemas.py").EVENTS
 SPECS = {s["key"]: json.loads((SPECS_DIR / f"{s['key']}-service.json").read_text()) for s in C.SERVICES}
-QUEUE_OWNER = {"user-service": "user", "social-service": "social", "journey-service": "journey",
+QUEUE_OWNER = {"auth-service": "auth", "user-service": "user", "social-service": "social", "journey-service": "journey",
                "chat-service": "chat", "notification-service": "notification", "notification.email": "notification"}  # fmt: skip
 problems: list[str] = []
 
@@ -212,6 +212,14 @@ def limit_text(route: Any, service_limit: str) -> str:
 
 
 # --------------------------------------------------------------------------- service sheets
+def auth_text(route: Any, path: str) -> str:
+    if route is not None and route.auth:
+        return "Bearer access token"
+    if route is not None and route.admin_network:  # admin-service: opaque admin sessions
+        return "None (admin networks only)" if path == "/admin/auth/login" else "Admin session (admin networks only)"
+    return "None"
+
+
 SERVICE_HEADERS = ["ID", "Method", "Path", "Parameters (path · query)", "Summary", "Auth", "Request body (schema)",
                    "Request example", "Success", "Response data (schema)", "Response example",
                    "Errors (status error.type)", "Rate limits", "Notes"]  # fmt: skip
@@ -240,7 +248,7 @@ for svc in C.SERVICES:
             USED_BY.setdefault((key, name), set()).add(e["id"])
             REQUEST_SCHEMAS[(key, name)] = REQUEST_SCHEMAS.get((key, name), True) and name in facts["body_refs"]
         rows.append([e["id"], e["method"], e["path"], facts["params"], e["summary"],
-                     "Bearer access token" if route is not None and route.auth else "None",
+                     auth_text(route, e["path"]),
                      facts["req_schema"], e["req"], facts["success"], facts["resp_schema"], e["resp"],
                      e["errors"] or "—", limit_text(route, e["limit"]), e["notes"]])  # fmt: skip
     if C.INTERNAL.get(key):
@@ -279,7 +287,7 @@ sheet("Chat WebSocket", "chat-ws  —  real-time protocol (/v1/ws)",
 
 # --------------------------------------------------------------------------- gateway
 UPSTREAM_NAME = {"auth": "auth-service", "user": "user-service", "journey": "journey-service", "social": "social-service",
-                 "chat": "chat-service", "notification": "notification-service"}  # fmt: skip
+                 "chat": "chat-service", "notification": "notification-service", "admin": "admin-service"}  # fmt: skip
 METHOD_ORDER = ("GET", "POST", "PUT", "PATCH", "DELETE")
 gw_rows: list[list[Any]] = [["Routed, in order: the first match wins. Anything not listed returns 404 at the edge."]]
 for n, route in enumerate(GW.ROUTES, 1):
@@ -290,7 +298,8 @@ for n, route in enumerate(GW.ROUTES, 1):
     else:
         shown, match = route.path, "exact"
     gw_rows.append([f"GW-R{n:02d}", " ".join(m for m in METHOD_ORDER if m in route.methods), shown, match, UPSTREAM_NAME[route.upstream],
-                    "Yes (Bearer)" if route.auth else "No", route.limit.replace("/", " / "),
+                    "Yes (Bearer)" if route.auth else ("No · admin networks only" if route.admin_network else "No"),
+                    route.limit.replace("/", " / "),
                     "User id" if route.limit_by == "user" else "Client IP",
                     "Fail open" if route.fail_open else "Fail closed (503)"])  # fmt: skip
 gw_rows += C.GATEWAY_EXTRA
@@ -443,12 +452,16 @@ for c, h in enumerate(["Sheet", "What's in it", "Entries", "Counting rule"], 1):
 r += 1
 index = [("Gateway Routes", "Public route table, edge auth, rate limits, WebSocket, edge behaviour",
           "=COUNTIF('Gateway Routes'!$A:$A,\"GW-R*\")", "Routed HTTP entries (GW-Rnn); /v1/ws is GW-WS")]  # fmt: skip
-what = {"auth": "Sign-in, tokens and sessions", "user": "Profile, tags, covers, media, public profiles",
+what = {"auth": "Sign-in, tokens and sessions, re-confirm codes", "user": "Profile, tags, covers, media, eKYC, account deletion, public profiles",
         "journey": "Journeys, feed, matches, likes/comments/shares/hides, Places, share pages",
         "social": "Follows, blocks, reports", "chat": "Connection requests, connections, conversations, messages",
-        "notification": "Device tokens, notification preferences; push and email (event-driven)"}  # fmt: skip
+        "notification": "Device tokens, notification preferences; push and email (event-driven)",
+        "admin": "Admin sign-in, reports, users, KYC reviews, journeys, app config, audit log; /v1/config"}  # fmt: skip
 for svc in C.SERVICES:
-    index.append((svc["sheet"], what[svc["key"]], f"=COUNTIF('{svc['sheet']}'!$C:$C,\"/v1/*\")", "Public endpoints (paths under /v1/)"))
+    count = f"=COUNTIF('{svc['sheet']}'!$C:$C,\"/v1/*\")"
+    if svc["key"] == "admin":
+        count += f"+COUNTIF('{svc['sheet']}'!$C:$C,\"/admin/*\")"
+    index.append((svc["sheet"], what[svc["key"]], count, "Public endpoints (paths under /v1/ and /admin/)"))
     if svc["key"] == "chat":
         index.append(("Chat WebSocket", "Real-time frames, close codes and error codes",
                       "=COUNTIF('Chat WebSocket'!$B:$B,\"C→S\")+COUNTIF('Chat WebSocket'!$B:$B,\"S→C\")",
@@ -477,7 +490,7 @@ for col, w in zip("ABCD", (24, 70, 10, 34), strict=True):
     ov.column_dimensions[col].width = w
 
 order = ["Overview", "Gateway Routes", *(s["sheet"] for s in C.SERVICES[:5]), "Chat WebSocket",
-         C.SERVICES[5]["sheet"], "Events", "Error Codes", "Schemas"]  # fmt: skip
+         *(s["sheet"] for s in C.SERVICES[5:]), "Events", "Error Codes", "Schemas"]  # fmt: skip
 wb._sheets = [wb[name] for name in order]  # noqa: SLF001 - openpyxl has no public reorder
 for sheet_ in wb:
     sheet_.page_setup.orientation = "landscape"

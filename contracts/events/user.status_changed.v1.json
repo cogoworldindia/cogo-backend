@@ -1,0 +1,153 @@
+{
+  "$defs": {
+    "CitySnapshot": {
+      "properties": {
+        "lat": {
+          "title": "Lat",
+          "type": "number"
+        },
+        "lng": {
+          "title": "Lng",
+          "type": "number"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "lat",
+        "lng"
+      ],
+      "title": "CitySnapshot",
+      "type": "object"
+    }
+  },
+  "description": "user-service -> `user.status_changed` (spec \u00a71A.5): an admin suspended, banned or\nreinstated the user, or a suspension ran out. `account_status` is now `suspended`\n(until `suspended_until`), `banned` or `active`. The full snapshot, like\nuser.kyc_level_changed, so projections apply it like user.updated.",
+  "properties": {
+    "account_status": {
+      "default": "active",
+      "title": "Account Status",
+      "type": "string"
+    },
+    "avatar_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Avatar Url"
+    },
+    "city": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CitySnapshot"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "dob": {
+      "anyOf": [
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dob"
+    },
+    "gender": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Gender"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "kyc_level": {
+      "default": "none",
+      "title": "Kyc Level",
+      "type": "string"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Name"
+    },
+    "personality_tag_ids": {
+      "default": [],
+      "items": {
+        "type": "integer"
+      },
+      "title": "Personality Tag Ids",
+      "type": "array"
+    },
+    "previous_status": {
+      "title": "Previous Status",
+      "type": "string"
+    },
+    "suspended_until": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Suspended Until"
+    },
+    "username": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Username"
+    },
+    "version": {
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version",
+    "previous_status"
+  ],
+  "title": "UserStatusChanged",
+  "type": "object"
+}

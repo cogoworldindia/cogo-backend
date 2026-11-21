@@ -23,7 +23,8 @@ patterns.
 | **social-service** | Follows, blocks, reports and auto-hide moderation | Postgres `socialdb` (follows, blocks, reports, moderation_state, user_projection, outbox, processed_events); Redis db5 | RabbitMQ (publishes `social.*`, `safety.*`; consumes `user.*`) |
 | **chat-service** (`chat-api`) | Connection requests, connections, conversations, messages, receipts, mute, badges | Postgres `chatdb` (connection_requests, connections, conversations, conversation_members, messages, user and block projections, outbox, processed_events); realtime Redis (pub/sub, message rate limits) | RabbitMQ (publishes `chat.*`; consumes `user.*`, blocks, journey lifecycle, moderation); journey-service join-check (internal HTTP) |
 | **chat-ws** | WebSockets only: the §6.3 protocol, presence, fan-out. Stateless, from the chat-service image | realtime Redis (presence, `user:{id}` channels) | chat-api internal API; auth JWKS |
-| **notification-service** | Email (OTP codes) and push: device tokens, preferences, the push worker | Postgres `notificationdb` (device_tokens, notification_prefs, notification_log, user_projection, processed_events); Redis db1 (idempotency, like batches) | RabbitMQ (consumes); SMTP relay; FCM; realtime Redis (reads presence) |
+| **notification-service** | Email (OTP codes) and push: device tokens, preferences, the push worker, admin warnings | Postgres `notificationdb` (device_tokens, notification_prefs, notification_log, user_projection, processed_events); Redis db1 (idempotency, like batches) | RabbitMQ (consumes); SMTP relay; FCM; realtime Redis (reads presence) |
+| **admin-service** | Admin users and roles, app config (source of truth), the moderation console's API, the audit log, and the React console at `/admin/console/` | Postgres `admindb` (app_config, admin_users, admin_audit_log, outbox); Redis db3 (admin sessions, login limits); writes the shared config Redis | every owner's `/internal/admin/*` (service tokens); RabbitMQ (publishes `config.updated`) |
 | **cogo-common** | Shared infrastructure library used by every service. It holds no domain logic. | — | — |
 | **RabbitMQ** | Event and command bus: exchange `cogo.events` (topic) and DLX `cogo.dlx` | one quorum queue + DLQ per consuming service | — |
 | **Object storage** | Avatars and cover photos (S3 API; RustFS in dev) | media bucket | Clients upload with presigned PUTs |
@@ -125,7 +126,8 @@ sequenceDiagram
 |---|---|---|
 | auth-service | `accounts` (one per person; `id` is the platform user id, UUIDv7), `identities` (UNIQUE provider+subject), `session_audit`, `outbox` | Email OTP and refresh sessions live in Redis db0 under hashed keys, so Redis holds no raw emails or tokens |
 | user-service | `users` (one row per person, profile columns included, `version` for projections), `personality_tags`, `user_cover_photos`, `media_uploads`, `kyc_attempts`, `block_projection`, `outbox`, `processed_events` | The user row is created from the event or from the first `GET /me`, whichever comes first. KYC keeps only outcomes: the verified official email, ID type, last 4 digits and match booleans; never documents, full numbers, or the name and DOB on the ID |
-| all services | Shared config Redis (db 7 in dev) `config:<key>` | App config (spec §10), written by admin-service (M7) and read by everyone through `AppConfig` |
+| all services | Shared config Redis (db 7 in dev) `config:<key>` and the `config:updated` channel | App config (spec §10): admin-service writes it (its `app_config` table is the source of truth, re-published at startup); every service reads it through `AppConfig` and drops a key when the channel says it changed |
+| admin-service | `app_config`, `admin_users` (argon2id passwords, encrypted TOTP secrets), `admin_audit_log`, `outbox`; Redis db3 `admin:*` | No user data: it reads and acts through the owning services |
 | journey-service | `journeys` (PostGIS points, GiST indexes), `journey_matches` (directional match rows), `journey_likes`, `journey_comments`, `journey_shares`, `hidden_journeys`, `user_projection`, `block_projection`, `outbox`, `processed_events` | Coordinates never leave the service; clients see place names only |
 | social-service | `follows`, `blocks`, `reports`, `moderation_state`, `user_projection`, `outbox`, `processed_events` | Source of truth for blocks; other services keep a versioned `block_projection` |
 | chat-service | `connection_requests` (one pending per pair), `connections` (user_a < user_b), `conversations`, `conversation_members` (read markers, mute, clear, unread count), `messages`, projections, `outbox`, `processed_events` | Request cards snapshot the route and scores at send time; the unmasked request text is admin-only |
@@ -338,12 +340,63 @@ sequenceDiagram
 - **Gates are config** (`kyc.gates`). Every service reads the same config Redis, so changing a
   gate applies within the cache TTL, with no deploy. An unknown level fails closed.
 
+## Admin, moderation and account deletion (M7)
+
+admin-service owns no user data. The console's API calls the owners' `/internal/admin/*`
+with its service token and the acting admin's id, then writes the audit log.
+
+```mermaid
+sequenceDiagram
+    participant A as Admin (console)
+    participant GW as api-gateway
+    participant AD as admin-service
+    participant O as owner (journey / chat / user)
+    participant S as social-service
+    A->>GW: POST /admin/reports/{id}/resolve {action: remove}
+    GW->>AD: only from ADMIN_ALLOWED_CIDRS
+    AD->>AD: admin session (Redis), role check
+    AD->>S: GET /internal/admin/reports/{id} (target, owner)
+    AD->>O: remove it (e.g. DELETE /internal/admin/journeys/{id}, X-Admin-Id)
+    AD->>S: POST /internal/admin/reports/{id}/resolve (closes every open report on the target)
+    AD->>AD: admin_audit_log: report.resolve
+```
+
+- **Suspend, ban, reinstate** go to user-service, which emits `user.status_changed`.
+  - journey, chat, social and notification hide the user or stop pushing to them.
+  - auth-service refuses sign-in and ends their sessions.
+  - Suspensions lift themselves when the date passes (user-service job).
+- **Config** edits are validated against the built-in defaults and stored in `app_config`.
+  - They're published to the shared config Redis and its `config:updated` channel, so every
+    replica of every service picks them up at once. `config.updated` also goes on the bus.
+  - `GET /v1/config` serves the client-visible keys with an ETag.
+- **Image moderation:** a confirmed upload queues `media.uploaded` to user-service itself.
+  - SafeSearch (adult or violence at LIKELY or above) takes the photo down and emits
+    `media.flagged`.
+  - social-service then opens a system report for the queue.
+
+```mermaid
+sequenceDiagram
+    participant App
+    participant AU as auth-service
+    participant U as user-service
+    participant MQ as RabbitMQ
+    participant X as journey, social, chat, notification, auth
+    App->>AU: POST /v1/auth/reauth/email/send, then /verify {code}
+    AU-->>App: reauth_token (5 min, aud cogo-reauth)
+    App->>U: DELETE /v1/me (X-Reauth-Token)
+    U->>U: anonymise ("Deleted user"; media, bio, tags, KYC cleared), outbox user.deleted
+    MQ->>X: user.deleted
+    X->>X: each cleans up its own data (journeys cancelled, follows and blocks removed, chats read-only, devices deleted, account anonymised)
+    U->>X: every 10–60 s: GET /internal/admin/deletion-status/{id}
+    U->>U: all done: deletion_completed_at (alert if > 24 h)
+```
+
 ## Later
 
 Matching compares endpoints and dates, not route geometry. If product wants "same
 road" matching (for example, Delhi to Manali matching Chandigarh to Manali), add a simplified
 route `LineString` per journey and score corridor overlap, with H3 cells as a candidate index.
-Admin (M7) and hardening (M8) follow the milestone plan in RECON.md.
+Hardening (M8) follows the milestone plan in RECON.md.
 
 New services copy the user-service template:
 - `cogo-common` for logging, errors, the token verifier, DB, outbox/inbox and topology.

@@ -1,6 +1,6 @@
 # CoGo backend — local development entry points. `make help` lists targets.
 COMPOSE  := docker compose --env-file .env --env-file .env.secrets
-PY_PROJECTS := libs/common services/auth services/user services/journey services/social services/chat services/notification services/api-gateway
+PY_PROJECTS := libs/common services/auth services/user services/journey services/social services/chat services/notification services/admin services/api-gateway
 
 .DEFAULT_GOAL := help
 .PHONY: help setup secrets check-docker build up down restart ps logs logs-% migrate obs-up \
@@ -49,13 +49,15 @@ obs-up: ## Start Jaeger (16686), Prometheus (9090), Grafana (3001)
 
 test: ## Run every test suite (needs Docker for testcontainers)
 	@set -e; for p in $(PY_PROJECTS); do echo "== $$p"; (cd $$p && uv run --quiet pytest -q -p no:logging); done
+	@echo "== services/admin/web (console)"; cd services/admin/web && { [ -d node_modules ] || npm ci --no-audit --no-fund --silent; } && npm test --silent
 
-lint: ## ruff + mypy for every Python project
+lint: ## ruff + mypy for every Python project, and the console's typecheck
 	@set -e; for p in $(PY_PROJECTS); do echo "== $$p"; (cd $$p && uv run --quiet ruff check . && uv run --quiet ruff format --check . && uv run --quiet mypy $$( [ -d src ] && echo src || echo app )); done
+	@echo "== services/admin/web (console)"; cd services/admin/web && { [ -d node_modules ] || npm ci --no-audit --no-fund --silent; } && npm run --silent typecheck
 
 contracts: ## Regenerate contracts/ (event JSON Schemas + OpenAPI); CI fails if they drift
 	@cd libs/common && uv run --quiet python ../../scripts/export_event_schemas.py ../../contracts/events
-	@set -e; for s in auth user journey social chat notification; do (cd services/$$s && PYTHONPATH=. uv run --quiet python ../../scripts/export_openapi.py ../../contracts/openapi/$$s-service.json); done
+	@set -e; for s in auth user journey social chat notification admin; do (cd services/$$s && PYTHONPATH=. uv run --quiet python ../../scripts/export_openapi.py ../../contracts/openapi/$$s-service.json); done
 
 api-docs: contracts ## Rebuild docs/api/CoGo-API-Reference.xlsx from the code (fails if api_content.py is stale)
 	@cd libs/common && uv run --quiet --with openpyxl python ../../docs/api/build_api_xlsx.py ../../contracts/openapi ../../docs/api/CoGo-API-Reference.xlsx

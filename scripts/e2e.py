@@ -10,10 +10,12 @@ if any check fails OR any public endpoint was never exercised, and prints the co
 Stdlib only; reuses the smoke test's helpers (HTTP, WebSocket, Mailpit).
 """
 
+import base64
+import hashlib
+import hmac
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 import uuid
@@ -85,15 +87,68 @@ def browse(method: str, url: str, form: str | None = None) -> tuple[int, dict[st
         return e.code, {k.lower(): v for k, v in e.headers.items()}, e.read().decode(errors="replace")
 
 
-CONFIG_TTL = float(os.environ.get("APP_CONFIG_TTL_SECONDS", "5"))
+def totp(secret: str, at: float) -> str:
+    """RFC 6238 (SHA-1, 30 s, 6 digits), as an authenticator app computes it."""
+    key = base64.b32decode(secret.upper() + "=" * (-len(secret) % 8))
+    digest = hmac.new(key, int(at // 30).to_bytes(8, "big"), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    return f"{(int.from_bytes(digest[offset:offset + 4], 'big') & 0x7FFFFFFF) % 1_000_000:06d}"
 
 
-def set_config(key: str, value: Any) -> bool:
-    """Write (or with None, remove) an app-config override, as admin-service will (M7)."""
-    cmd = ["SET", f"config:{key}", json.dumps(value)] if value is not None else ["DEL", f"config:{key}"]
-    done = subprocess.run(["docker", "exec", "cogo-redis-1", "redis-cli", "-n", "7", *cmd],
-                          capture_output=True, text=True, timeout=10)  # fmt: skip
-    return done.returncode == 0
+class Admin:
+    """The dev bootstrap admin (ADMIN_BOOTSTRAP_* from .env/.env.secrets), signed in once."""
+
+    def __init__(self) -> None:
+        self.email = os.environ.get("ADMIN_BOOTSTRAP_EMAIL", "admin@cogo.local")
+        self.token = ""
+
+    def login(self) -> bool:
+        secret = os.environ.get("ADMIN_BOOTSTRAP_TOTP_SECRET", "")
+        password = os.environ.get("ADMIN_BOOTSTRAP_PASSWORD", "")
+        for offset in (0, 30, -30):  # a code is accepted once (a rerun may have used this one)
+            body = {"email": self.email, "password": password, "totp_code": totp(secret, time.time() + offset)}
+            status, _, resp = api("POST", "/admin/auth/login", body)
+            if status == 200:
+                self.token = resp["data"]["token"]
+                return True
+        return False
+
+    def call(self, method: str, path: str, body: Any = None) -> tuple[int, dict[str, str], Any]:
+        return api(method, path, body, headers={"Authorization": f"Bearer {self.token}"})
+
+    def set_config(self, key: str, value: Any) -> bool:
+        current = data(self.call("GET", f"/admin/config/{key}")) or {}
+        status, _, _ = self.call("PUT", f"/admin/config/{key}", {"value": value, "version": current.get("version")})
+        time.sleep(1)  # services drop their cached value on the config:updated broadcast
+        return status == 200
+
+
+ADMIN = Admin()
+
+
+def admin_find(path: str, pred: Callable[[dict[str, Any]], bool], pages: int = 40) -> dict[str, Any] | None:
+    """Page through an admin list (older runs' items may come first) for a matching item."""
+    cursor = None
+    for _ in range(pages):
+        sep = "&" if "?" in path else "?"
+        page = data(ADMIN.call("GET", path + (f"{sep}cursor={cursor}" if cursor else ""))) or {}
+        for item in page.get("items", []):
+            if pred(item):
+                return dict(item)
+        cursor = page.get("next_cursor")
+        if not cursor:
+            return None
+    return None
+
+
+def new_code(email: str, previous: str | None, timeout: float = 20.0) -> str:
+    """The newest emailed code once it differs from `previous` (the inbox already has some)."""
+    deadline = time.time() + timeout
+    while True:
+        code = smoke.otp_for(email, timeout=timeout)
+        if code != previous or time.time() > deadline:
+            return code
+        time.sleep(0.5)
 
 
 def section(name: str) -> None:
@@ -141,12 +196,12 @@ class User:
         self.email = f"e2e-{self.name.lower()}-{RUN}@example.com"
 
 
-def upload(user: User, kind: str) -> str | None:
+def upload(user: User, kind: str, content: bytes = b"0" * 512) -> str | None:
     """Presigned PUT straight to object storage, then confirm (USER-06/07)."""
     up = data(api("POST", "/v1/media/upload-url", {"kind": kind, "content_type": "image/png"}, user.token)) or {}
     if not up.get("upload_url"):
         return None
-    req = urllib.request.Request(up["upload_url"], data=b"\x89PNG\r\n\x1a\n" + b"0" * 512, method="PUT",
+    req = urllib.request.Request(up["upload_url"], data=b"\x89PNG\r\n\x1a\n" + content, method="PUT",
                                  headers={"Content-Type": "image/png"})  # fmt: skip
     with urllib.request.urlopen(req, timeout=10) as r:
         if r.status != 200:
@@ -637,12 +692,12 @@ def scenario() -> int:
     check("...and can't ask to join it -> 403 not_eligible",
           err(api("POST", "/v1/connection-requests", {"target_journey_id": kv_j, "message": "hi"}, ravi.token)) == (403, "not_eligible"))
 
-    # spec §13 M6: "a gate change in config takes effect without a deploy"
+    # spec §13 M6: "a gate change in config takes effect without a deploy" (M7: through the admin API)
+    check("the admin signs in to the console API (email + password + authenticator code)", ADMIN.login())
+    original_kyc = (data(ADMIN.call("GET", "/admin/config/kyc")) or {}).get("value")
     gates = {"gates": {"create_journey": "partial", "send_connection_request": "full"}}
-    check("admin tightens the KYC gates (config:kyc in the shared config Redis)", set_config("kyc", gates))
+    check("admin tightens the KYC gates (PUT /admin/config/kyc)", ADMIN.set_config("kyc", gates))
     try:
-        print(f"  ....  waiting {CONFIG_TTL + 1:.0f}s for every service to re-read config (APP_CONFIG_TTL_SECONDS)")
-        time.sleep(CONFIG_TTL + 1)
         resp = api("POST", "/v1/journeys", journey_body(DELHI, HARIDWAR, start), ravi.token)
         check("Ravi (none) can't post a journey -> 403 kyc_required (required_level partial)",
               err(resp) == (403, "kyc_required") and resp[2]["error"].get("details") == {"required_level": "partial"}, resp[2])
@@ -656,11 +711,10 @@ def scenario() -> int:
         check("...and can ask to join Kabir's trip", resp[0] == 201, resp[2])
         api("POST", f"/v1/connection-requests/{(data(resp) or {}).get('id')}/withdraw", token=asha.token)
     finally:
-        set_config("kyc", None)
-    time.sleep(CONFIG_TTL + 1)
+        ADMIN.set_config("kyc", original_kyc)
     resp = api("POST", "/v1/journeys", journey_body(DELHI, HARIDWAR, start), ravi.token)
     ravi.journeys["after_gate"] = (data(resp) or {}).get("id", "")
-    check("gates reopened (override removed): Ravi can post again", resp[0] == 201, resp[2])
+    check("gates reopened (admin put them back): Ravi can post again", resp[0] == 201, resp[2])
 
     # ------------------------------------------------------------ sessions
     section("Sessions (auth-service)")
@@ -673,16 +727,131 @@ def scenario() -> int:
     check("logout everywhere", status == 200 and resp["data"]["revoked_sessions"] >= 1, resp)
     check("a revoked refresh token can't be used", api("POST", "/v1/auth/token/refresh", {"refresh_token": ravi.refresh})[0] == 401)
 
+    # ------------------------------------------------------------ admin + moderation (M7)
+    section("Admin console and moderation (admin-service, spec §5.10)")
+    public = api("GET", "/v1/config")
+    visible = data(public) or {}
+    check("GET /v1/config: client-visible config only, with an ETag",
+          public[0] == 200 and {"kyc", "features", "journeys"} <= set(visible) and "matching" not in visible
+          and bool(public[1].get("etag")), sorted(visible))  # fmt: skip
+    check("...unchanged config -> 304 Not Modified", api("GET", "/v1/config", headers={"If-None-Match": public[1].get("etag", "")})[0] == 304)
+    check("GET /admin/me: signed in as an admin", (data(ADMIN.call("GET", "/admin/me")) or {}).get("role") == "admin")
+    keys = {e["key"] for e in (data(ADMIN.call("GET", "/admin/config")) or {}).get("items", [])}
+    check("config list: every key the services read", {"kyc", "matching", "moderation", "features"} <= keys, sorted(keys))
+    check("the console itself is served", browse("GET", f"{GW}/admin/console/")[0] == 200)
+
+    report = admin_find("/admin/reports?status=open&target_type=journey&limit=50", lambda g: g["target_id"] == k_j)
+    check("Neha's report on Kabir's trip is in the queue, with a preview",
+          bool(report) and (report or {}).get("target", {}).get("title", "").startswith("Journey ·")
+          and report["target"]["owner"]["id"] == kabir.id, report)  # fmt: skip
+    warning = f"Please keep trip details accurate ({RUN})."
+    resolved = ADMIN.call("POST", f"/admin/reports/{(report or {}).get('report_id')}/resolve",
+                          {"action": "warn", "note": "first report", "warning": warning})  # fmt: skip
+    check("resolve with a warning: reports actioned", resolved[0] == 200 and (data(resolved) or {}).get("status") == "actioned", resolved[2])
+    check("...Kabir gets the warning as a push", pushed(kabir, warning))
+    again = ADMIN.call("POST", f"/admin/reports/{(report or {}).get('report_id')}/resolve", {"action": "dismiss", "note": "x"})
+    check("...resolving twice -> 409 already_resolved", err(again) == (409, "already_resolved"))
+
+    bad = upload(ravi, "avatar", b"cogo-test:flag" + b"0" * 128)
+    set_bad = api("PATCH", "/v1/me", {"avatar_url": bad}, ravi.token)
+    check("Ravi sets an avatar that SafeSearch (mock) flags...", set_bad[0] == 200, set_bad[2])
+    check("...it's taken down within seconds",
+          bool(eventually(lambda: (data(api("GET", "/v1/me", token=ravi.token)) or {}).get("avatar_url") is None, timeout=15)))  # fmt: skip
+    media = eventually(lambda: admin_find("/admin/reports?status=open&target_type=media&limit=50",
+                                          lambda g: g["target_owner_id"] == ravi.id))  # fmt: skip
+    check("...and a system report opens for admins (no reporter)",
+          bool(media) and media["reports"][0]["reporter_id"] is None and "adult" in (media["reports"][0]["note"] or ""), media)  # fmt: skip
+    removed = ADMIN.call("POST", f"/admin/reports/{(media or {}).get('report_id')}/resolve", {"action": "remove", "note": "nudity"})
+    check("admin confirms the takedown (remove)", removed[0] == 200 and (data(removed) or {}).get("hidden") is True, removed[2])
+
+    review = admin_find("/admin/kyc-reviews?limit=50", lambda r: r["user_id"] == neha.id)
+    check("Neha's ID mismatch waits in the KYC review queue",
+          bool(review) and review["result"]["name_match"] is False and review["result"]["dob_match"] is True, review)  # fmt: skip
+    approved = ADMIN.call("POST", f"/admin/kyc-reviews/{neha.id}/approve", {"note": "name order differs"})
+    check("approve it: Neha is verified (full)", (data(approved) or {}).get("kyc_level") == "full", approved[2])
+    check("...the app shows it", (data(api("GET", "/v1/me/kyc", token=neha.token)) or {}).get("gov_id", {}).get("status") == "verified")
+    check("...and so does her badge elsewhere (journey-service, via the event)",
+          bool(eventually(lambda: (data(api("GET", f"/v1/journeys/{n_j}", token=asha.token)) or {}).get("host", {}).get("kyc_level") == "full")))  # fmt: skip
+
+    hits = (data(ADMIN.call("GET", f"/admin/users?q=ravi_{RUN}")) or {}).get("items", [])
+    check("search users by username", [h["id"] for h in hits] == [ravi.id], hits)
+    detail = data(ADMIN.call("GET", f"/admin/users/{ravi.id}")) or {}
+    check("user detail: profile, status, KYC, open reports",
+          detail.get("username") == f"ravi_{RUN}" and detail.get("account_status") == "active" and "open_reports" in detail, detail)  # fmt: skip
+    until = (datetime.now(UTC) + timedelta(days=2)).isoformat()
+    suspended = ADMIN.call("POST", f"/admin/users/{ravi.id}/suspend", {"until": until, "reason": "e2e"})
+    check("suspend Ravi for 2 days", (data(suspended) or {}).get("account_status") == "suspended", suspended[2])
+    check("...his trip and profile disappear for others (user.status_changed)",
+          bool(eventually(lambda: api("GET", f"/v1/journeys/{r_j}", token=asha.token)[0] == 404
+                          and api("GET", f"/v1/users/{ravi.id}", token=asha.token)[0] == 404)))  # fmt: skip
+    check("...and he can't change anything", err(api("PATCH", "/v1/me", {"bio": "x"}, ravi.token)) == (403, "account_inactive"))
+    banned = ADMIN.call("POST", f"/admin/users/{ravi.id}/ban", {"reason": "e2e"})
+    check("ban (admins only)", (data(banned) or {}).get("account_status") == "banned", banned[2])
+    back = ADMIN.call("POST", f"/admin/users/{ravi.id}/reinstate", {"reason": "appeal upheld"})
+    check("reinstate", (data(back) or {}).get("account_status") == "active", back[2])
+    check("...his trip is back", bool(eventually(lambda: api("GET", f"/v1/journeys/{r_j}", token=asha.token)[0] == 200)))
+    hello = f"Hello from the CoGo team ({RUN})"
+    warned = ADMIN.call("POST", f"/admin/users/{asha.id}/warn", {"message": hello, "reason": "e2e"})
+    check("warn a user directly: a push they can't switch off", (data(warned) or {}).get("sent") is True and pushed(asha, hello), warned[2])
+
+    viewed = data(ADMIN.call("GET", f"/admin/journeys/{kv_j}")) or {}
+    check("admin journey view", viewed.get("owner", {}).get("id") == kabir.id and viewed.get("deleted") is False, viewed)
+    check("admin removes Kabir's verified-only trip", data(ADMIN.call("DELETE", f"/admin/journeys/{kv_j}?reason=e2e")) == {"deleted": True})
+    check("...gone for everyone and from Asha's matches",
+          bool(eventually(lambda: api("GET", f"/v1/journeys/{kv_j}", token=asha.token)[0] == 404 and kv_j not in match_ids(asha, a_j))))  # fmt: skip
+
+    audit = (data(ADMIN.call("GET", "/admin/audit-log?limit=100")) or {}).get("items", [])
+    mine = {e["action"] for e in audit if e["admin"]["email"] == ADMIN.email}
+    needed = {"admin.login", "config.update", "report.resolve", "kyc.approve", "user.suspend", "user.ban", "user.reinstate", "user.warn", "journey.delete"}
+    check("every admin action is in the audit log", needed <= mine, sorted(needed - mine))
+    about_ravi = (data(ADMIN.call("GET", f"/admin/audit-log?target_id={ravi.id}")) or {}).get("items", [])
+    check("...filterable by target", about_ravi and all(e["target_id"] == ravi.id for e in about_ravi), len(about_ravi))
+
+    # ------------------------------------------------------------ account deletion (M7, spec §7)
+    section("Deleting an account (spec §7, E2E flow 4)")
+    followers_before = (data(api("GET", "/v1/me", token=asha.token)) or {}).get("stats", {}).get("followers", 0)
+    check("deleting needs a fresh code -> 403 reauth_required", err(api("DELETE", "/v1/me", token=kabir.token)) == (403, "reauth_required"))
+    previous = smoke.otp_for(kabir.email)
+    sent = api("POST", "/v1/auth/reauth/email/send", token=kabir.token)
+    check("Kabir asks for a confirmation code (sent to his account email)",
+          sent[0] == 202 and (data(sent) or {}).get("email_hint", "").endswith("@example.com"), sent[2])  # fmt: skip
+    code = new_code(kabir.email, previous)
+    proof = data(api("POST", "/v1/auth/reauth/email/verify", {"code": code, "purpose": "delete_account"}, kabir.token)) or {}
+    check("...the code buys a 5-minute deletion token", bool(proof.get("reauth_token")) and proof.get("expires_in") == 300, proof)
+    gone = api("DELETE", "/v1/me", token=kabir.token, headers={"X-Reauth-Token": proof.get("reauth_token", "")})
+    check("DELETE /v1/me -> 202 deleting", gone[0] == 202 and (data(gone) or {}).get("status") == "deleting", gone[2])
+    check("his profile is gone (to him and to others)",
+          api("GET", "/v1/me", token=kabir.token)[0] == 404 and api("GET", f"/v1/users/{kabir.id}", token=asha.token)[0] == 404)  # fmt: skip
+    check("his trips are cancelled for everyone (journey-service)",
+          bool(eventually(lambda: api("GET", f"/v1/journeys/{k_j}", token=asha.token)[0] == 404)))  # fmt: skip
+    check("Asha's follower count drops (social-service removed his follow)",
+          bool(eventually(lambda: (data(api("GET", "/v1/me", token=asha.token)) or {}).get("stats", {}).get("followers") == followers_before - 1)))  # fmt: skip
+    check("every service reports it's done (user-service's deletion tracker)",
+          bool(eventually(lambda: (data(ADMIN.call("GET", f"/admin/users/{kabir.id}")) or {}).get("deletion_completed_at"), timeout=60, every=2)))  # fmt: skip
+    resent = send_code(kabir.email)
+    if err(resent) == (429, "otp_cooldown"):  # like the app: wait as Retry-After says
+        time.sleep(int(resent[1].get("retry-after", "30")) + 1)
+        resent = send_code(kabir.email)
+    check("...signing up again with the same email: a code is sent", resent[0] == 202, resent[2])
+    fresh = api("POST", "/v1/auth/email/verify", {"email": kabir.email, "code": new_code(kabir.email, code)})
+    out = data(fresh) or {}
+    check("his email address can start over: a new, empty account",
+          fresh[0] == 200 and out.get("is_new_user") is True and out.get("user_id") != kabir.id, fresh[2])  # fmt: skip
+    if out.get("access_token"):  # the new account is this run's too
+        PEOPLE.append(User("Kabir2", "male", id=out["user_id"], token=out["access_token"]))
+    check("admin signs out", ADMIN.call("POST", "/admin/auth/logout")[0] == 200
+          and err(ADMIN.call("GET", "/admin/me")) == (401, "invalid_session"))  # fmt: skip
+
     # ------------------------------------------------------------ lifecycle + cleanup
     section("Deleting journeys (matches purged, requests expire)")
     check("Asha deletes her trip", api("DELETE", f"/v1/journeys/{a_j}", token=asha.token)[0] == 200)
     check("...it's gone for everyone", api("GET", f"/v1/journeys/{a_j}", token=kabir.token)[0] == 404)
-    check("...and from other trips' matches", bool(eventually(lambda: a_j not in match_ids(kabir, k_j))))
+    check("...and from other trips' matches", bool(eventually(lambda: a_j not in match_ids(neha, n_j))))
     for user in (ravi, neha, kabir):  # Ravi's and Neha's tokens were revoked by logout: access tokens live 15 min
         for jid in user.journeys.values():
             api("DELETE", f"/v1/journeys/{jid}", token=user.token)
     check("dead-letter queues are empty", all(smoke.queue_depth(q) == 0 for q in (
-        "user-service.dlq", "social-service.dlq", "journey-service.dlq", "chat-service.dlq",
+        "auth-service.dlq", "user-service.dlq", "social-service.dlq", "journey-service.dlq", "chat-service.dlq",
         "notification-service.dlq", "notification.email.dlq")))  # fmt: skip
 
     # ------------------------------------------------------------ coverage

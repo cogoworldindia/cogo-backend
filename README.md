@@ -18,11 +18,12 @@ versions and holds the local stack.
 | `libs/common` | `cogo-common` | Shared infrastructure: logging, error envelope, JWKS/JWT verification, DB/Redis helpers, outbox/inbox, RabbitMQ topology, telemetry |
 | `services/api-gateway` | `api-gateway` | Public edge: route allowlist, edge JWT check, Redis rate limits, streaming proxy |
 | `services/auth` | `auth-service` | Identity: email OTP, Google (Firebase) sign-in, account linking, EdDSA access tokens + JWKS, rotating refresh sessions |
-| `services/user` | `user-service` | Profiles, tags, covers, media uploads; emits `user.*`; consumes `user.registered`, `social.*followed` |
+| `services/user` | `user-service` | Profiles, tags, covers, media uploads and image moderation, eKYC, account deletion (and its tracker); emits `user.*` |
 | `services/journey` | `journey-service` | Journeys, home feed, engagement, share pages, Places proxy, matching worker + Matches list |
 | `services/social` | `social-service` | Follows, blocks, reports, auto-hide moderation |
 | `services/chat` | `chat-service` | Connection requests, connections, conversations, messages (`chat-api`), and the WebSocket server (`chat-ws`) |
-| `services/notification` | `notification-service` | Email (OTP) and push notifications: device tokens, preferences, FCM (no HTTP send API) |
+| `services/notification` | `notification-service` | Email (OTP) and push notifications: device tokens, preferences, FCM (no public send API; admin warnings internally) |
+| `services/admin` | `admin-service` | Admin console (React, `/admin/console/`) and its API: reports, users, KYC reviews, app config (source of truth, `/v1/config`), audit log |
 | `services/mail` | `mail-service` | **Retired** (Java/Gmail). Not started by compose; kept only until its unpushed commit is dealt with |
 
 ## Documentation
@@ -53,6 +54,7 @@ make e2e       # full end-to-end test: every public endpoint, 4 users (~2 min)
 | URL | What |
 |---|---|
 | http://localhost:8000 | API gateway (the only API endpoint clients use) |
+| http://localhost:8000/admin/ | Admin console (dev admin: `ADMIN_BOOTSTRAP_*` in `.env` / `.env.secrets`) |
 | http://localhost:8025 | Mailpit: every email the stack sends (including OTP codes) lands here |
 | http://localhost:15672 | RabbitMQ management (user `cogo`, password in `.env.secrets`) |
 | http://localhost:9000 | Media store (RustFS, S3-compatible): presigned uploads and served files |
@@ -128,8 +130,14 @@ through a named Docker build context in compose (`additional_contexts: common`).
 
 ## Roadmap
 
-Phase 1 follows the build spec's milestones (M0–M8). M0–M6 are done: platform foundations,
-profiles and follows, journeys, feed and safety, matching, chat with push notifications, and
-eKYC (official email + government ID, with config-driven gates). Next are admin and moderation
-(M7) and hardening (M8). The plan and its
+Phase 1 follows the build spec's milestones (M0–M8). M0–M7 are done:
+- platform foundations;
+- profiles and follows;
+- journeys, the feed and safety;
+- matching;
+- chat with push notifications;
+- eKYC (official email + government ID, with config-driven gates);
+- the admin console and moderation, image moderation and account deletion.
+
+Next is hardening (M8). The plan and its
 status are in [docs/RECON.md](docs/RECON.md) §5.

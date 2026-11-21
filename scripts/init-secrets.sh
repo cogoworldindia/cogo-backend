@@ -26,13 +26,22 @@ if grep -q '^JWT_SECRET_KEY=' .env.secrets; then
 fi
 
 for key in POSTGRES_PASSWORD AUTH_DB_PASSWORD USER_DB_PASSWORD JOURNEY_DB_PASSWORD SOCIAL_DB_PASSWORD \
-           CHAT_DB_PASSWORD NOTIFICATION_DB_PASSWORD RABBITMQ_PASSWORD OTP_HMAC_KEY KYC_OTP_HMAC_KEY KYC_MOCK_WEBHOOK_SECRET CURSOR_SECRET MEDIA_ACCESS_KEY MEDIA_SECRET_KEY; do
+           CHAT_DB_PASSWORD NOTIFICATION_DB_PASSWORD RABBITMQ_PASSWORD OTP_HMAC_KEY KYC_OTP_HMAC_KEY KYC_MOCK_WEBHOOK_SECRET CURSOR_SECRET MEDIA_ACCESS_KEY MEDIA_SECRET_KEY \
+           ADMIN_DB_PASSWORD ADMIN_TOTP_ENCRYPTION_KEY ADMIN_BOOTSTRAP_PASSWORD; do
   current="$(grep -E "^${key}=" .env.secrets | tail -1 | cut -d= -f2- || true)"
   if [[ -z "$current" || "$current" == "CHANGE_ME" ]]; then
     set_secret "$key" "$(openssl rand -hex 24)"
     echo "generated ${key}"
   fi
 done
+
+# The dev admin's authenticator secret must be base32 (RFC 6238); add it to an authenticator
+# app, or compute codes from it (scripts/e2e.py does).
+current="$(grep -E "^ADMIN_BOOTSTRAP_TOTP_SECRET=" .env.secrets | tail -1 | cut -d= -f2- || true)"
+if [[ -z "$current" || "$current" == "CHANGE_ME" ]]; then
+  set_secret ADMIN_BOOTSTRAP_TOTP_SECRET "$(python3 -c 'import base64, os; print(base64.b32encode(os.urandom(20)).decode())')"
+  echo "generated ADMIN_BOOTSTRAP_TOTP_SECRET"
+fi
 
 mkdir -p secrets && chmod 700 secrets
 if [[ ! -f secrets/jwt_private_key.pem ]]; then

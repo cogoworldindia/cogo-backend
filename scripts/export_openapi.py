@@ -18,7 +18,7 @@ pem = Ed25519PrivateKey.generate().private_bytes(serialization.Encoding.PEM, ser
 os.environ.update({
     "ENV": "development", "METRICS_ENABLED": "false", "LOG_JSON": "false",
     "DATABASE_URL": "postgresql+asyncpg://u:p@h/db", "RABBITMQ_URL": "amqp://u:p@h/", "REDIS_URL": "redis://h/0",
-    "OTP_HMAC_KEY": "x", "KYC_OTP_HMAC_KEY": "x", "KYC_MOCK_WEBHOOK_SECRET": "x", "CURSOR_SECRET": "x", "JWT_PRIVATE_KEY_FILE": str(tmp / "key.pem"), "SMTP_HOST": "localhost",
+    "OTP_HMAC_KEY": "x", "KYC_OTP_HMAC_KEY": "x", "KYC_MOCK_WEBHOOK_SECRET": "x", "ADMIN_TOTP_ENCRYPTION_KEY": "x", "CURSOR_SECRET": "x", "JWT_PRIVATE_KEY_FILE": str(tmp / "key.pem"), "SMTP_HOST": "localhost",
     "SERVICE_PRIVATE_KEY_FILE": str(tmp / "key.pem"), "SERVICE_PUBLIC_KEYS_DIR": str(tmp / "public"),
 })
 from app.main import create_app  # noqa: E402

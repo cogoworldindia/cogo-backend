@@ -25,6 +25,7 @@ x-user-db-url: &user-db-url postgresql+asyncpg://${USER_DB_USER:-user_svc}:${USE
 x-journey-db-url: &journey-db-url postgresql+asyncpg://${JOURNEY_DB_USER:-journey_svc}:${JOURNEY_DB_PASSWORD:?run make secrets}@postgres:5432/${JOURNEY_DB:-journeydb}
 x-social-db-url: &social-db-url postgresql+asyncpg://${SOCIAL_DB_USER:-social_svc}:${SOCIAL_DB_PASSWORD:?run make secrets}@postgres:5432/${SOCIAL_DB:-socialdb}
 x-chat-db-url: &chat-db-url postgresql+asyncpg://${CHAT_DB_USER:-chat_svc}:${CHAT_DB_PASSWORD:?run make secrets}@postgres:5432/${CHAT_DB:-chatdb}
+x-admin-db-url: &admin-db-url postgresql+asyncpg://${ADMIN_DB_USER:-admin_svc}:${ADMIN_DB_PASSWORD:?run make secrets}@postgres:5432/${ADMIN_DB:-admindb}
 x-notification-db-url: &notification-db-url postgresql+asyncpg://${NOTIFICATION_DB_USER:-notification_svc}:${NOTIFICATION_DB_PASSWORD:?run make secrets}@postgres:5432/${NOTIFICATION_DB:-notificationdb}
 # Realtime Redis: chat pub/sub fan-out, presence, message rate limits (chat-api, chat-ws, notification)
 x-realtime-redis: &realtime-redis redis://redis:6379/6
@@ -58,6 +59,9 @@ services:
       NOTIFICATION_DB: ${NOTIFICATION_DB:-notificationdb}
       NOTIFICATION_DB_USER: ${NOTIFICATION_DB_USER:-notification_svc}
       NOTIFICATION_DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD:?run make secrets}
+      ADMIN_DB: ${ADMIN_DB:-admindb}
+      ADMIN_DB_USER: ${ADMIN_DB_USER:-admin_svc}
+      ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:?run make secrets}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./infra/postgres/initdb/20-service-databases.sh:/docker-entrypoint-initdb.d/20-service-databases.sh:ro
@@ -67,6 +71,44 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  # Creates any missing service database and role on every `up` (the init script alone runs
+  # only on an empty volume), so a new service works on an existing dev volume.
+  db-provision:
+    <<: *service
+    restart: "no"
+    image: postgis/postgis:17-3.5
+    entrypoint: ["bash", "/provision.sh"]
+    environment:
+      PGHOST: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD:?run make secrets}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run make secrets}
+      AUTH_DB: ${AUTH_DB:-authdb}
+      AUTH_DB_USER: ${AUTH_DB_USER:-auth_svc}
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:?run make secrets}
+      USER_DB: ${USER_DB:-userdb}
+      USER_DB_USER: ${USER_DB_USER:-user_svc}
+      USER_DB_PASSWORD: ${USER_DB_PASSWORD:?run make secrets}
+      JOURNEY_DB: ${JOURNEY_DB:-journeydb}
+      JOURNEY_DB_USER: ${JOURNEY_DB_USER:-journey_svc}
+      JOURNEY_DB_PASSWORD: ${JOURNEY_DB_PASSWORD:?run make secrets}
+      SOCIAL_DB: ${SOCIAL_DB:-socialdb}
+      SOCIAL_DB_USER: ${SOCIAL_DB_USER:-social_svc}
+      SOCIAL_DB_PASSWORD: ${SOCIAL_DB_PASSWORD:?run make secrets}
+      CHAT_DB: ${CHAT_DB:-chatdb}
+      CHAT_DB_USER: ${CHAT_DB_USER:-chat_svc}
+      CHAT_DB_PASSWORD: ${CHAT_DB_PASSWORD:?run make secrets}
+      NOTIFICATION_DB: ${NOTIFICATION_DB:-notificationdb}
+      NOTIFICATION_DB_USER: ${NOTIFICATION_DB_USER:-notification_svc}
+      NOTIFICATION_DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD:?run make secrets}
+      ADMIN_DB: ${ADMIN_DB:-admindb}
+      ADMIN_DB_USER: ${ADMIN_DB_USER:-admin_svc}
+      ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:?run make secrets}
+    volumes:
+      - ./infra/postgres/initdb/20-service-databases.sh:/provision.sh:ro
+    depends_on:
+      postgres: { condition: service_healthy }
 
   redis:
     <<: *service
@@ -127,7 +169,7 @@ services:
     environment:
       DATABASE_URL: *auth-db-url
     depends_on:
-      postgres: { condition: service_healthy }
+      db-provision: { condition: service_completed_successfully }
 
   auth-service:
     <<: *service
@@ -145,7 +187,8 @@ services:
       REFRESH_TOKEN_TTL_DAYS: ${REFRESH_TOKEN_TTL_DAYS:-30}
       OTP_HMAC_KEY: ${OTP_HMAC_KEY:?run make secrets}
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
-    secrets: [jwt_private_key]
+    secrets: [jwt_private_key, { source: auth_service_key, target: service_key }]
+    volumes: [*service-keys]
     depends_on:
       auth-migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -163,7 +206,7 @@ services:
     environment:
       DATABASE_URL: *user-db-url
     depends_on:
-      postgres: { condition: service_healthy }
+      db-provision: { condition: service_completed_successfully }
 
   user-service:
     <<: *service
@@ -192,6 +235,7 @@ services:
       KYC_PUBLIC_BASE_URL: ${KYC_PUBLIC_BASE_URL:-http://localhost:8000}
       KYC_MOCK_WEBHOOK_URL: http://api-gateway:8000/v1/webhooks/kyc/mock
       KYC_RETURN_URL: ${KYC_RETURN_URL:-cogo://kyc/return}
+      JOBS_INTERVAL_SECONDS: ${USER_JOBS_INTERVAL_SECONDS:-10}  # suspensions, deletion tracker
     secrets: [{ source: user_service_key, target: service_key }]
     volumes: [*service-keys]
     depends_on:
@@ -213,7 +257,7 @@ services:
     environment:
       DATABASE_URL: *journey-db-url
     depends_on:
-      postgres: { condition: service_healthy }
+      db-provision: { condition: service_completed_successfully }
 
   journey-service:
     <<: *service
@@ -252,7 +296,7 @@ services:
     environment:
       DATABASE_URL: *social-db-url
     depends_on:
-      postgres: { condition: service_healthy }
+      db-provision: { condition: service_completed_successfully }
 
   social-service:
     <<: *service
@@ -286,7 +330,7 @@ services:
     environment:
       DATABASE_URL: *chat-db-url
     depends_on:
-      postgres: { condition: service_healthy }
+      db-provision: { condition: service_completed_successfully }
 
   chat-service:  # chat-api: requests, conversations, internal API, consumers
     <<: *service
@@ -340,7 +384,7 @@ services:
     environment:
       DATABASE_URL: *notification-db-url
     depends_on:
-      postgres: { condition: service_healthy }
+      db-provision: { condition: service_completed_successfully }
 
   notification-service:
     <<: *service
@@ -362,11 +406,48 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       MAIL_FROM: ${MAIL_FROM:-CoGo <no-reply@cogo.app>}
+    secrets: [{ source: notification_service_key, target: service_key }]
+    volumes: [*service-keys]
     depends_on:
       notification-migrate: { condition: service_completed_successfully }
       rabbitmq: { condition: service_healthy }
       redis: { condition: service_healthy }
       auth-service: { condition: service_healthy }
+
+  # ---------------------------------------------------------------- admin (spec §1A.1)
+  admin-migrate:
+    <<: *service
+    restart: "no"
+    image: cogo/admin-service:dev
+    build: &admin-build
+      context: ./services/admin
+      additional_contexts: { common: ./libs/common }
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: *admin-db-url
+    depends_on:
+      db-provision: { condition: service_completed_successfully }
+
+  admin-service:
+    <<: *service
+    image: cogo/admin-service:dev
+    build: *admin-build
+    environment:
+      <<: *common-env
+      DATABASE_URL: *admin-db-url
+      REDIS_URL: redis://redis:6379/3
+      RABBITMQ_URL: *rabbit-url
+      ADMIN_TOTP_ENCRYPTION_KEY: ${ADMIN_TOTP_ENCRYPTION_KEY:?run make secrets}
+      # Development only: the first admin (sign in at http://localhost:8000/admin/)
+      ADMIN_BOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL:-admin@cogo.local}
+      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:?run make secrets}
+      ADMIN_BOOTSTRAP_TOTP_SECRET: ${ADMIN_BOOTSTRAP_TOTP_SECRET:?run make secrets}
+    secrets: [{ source: admin_service_key, target: service_key }]
+    volumes: [*service-keys]
+    depends_on:
+      admin-migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
 
   # ---------------------------------------------------------------- edge
   api-gateway:
@@ -385,6 +466,9 @@ services:
       CHAT_SERVICE_URL: http://chat-service:8000
       CHAT_WS_URL: ws://chat-ws:8000
       NOTIFICATION_SERVICE_URL: http://notification-service:8000
+      ADMIN_SERVICE_URL: http://admin-service:8000
+      # /admin/* only from these networks (spec §6: IP allow-list). Dev: localhost and Docker.
+      ADMIN_ALLOWED_CIDRS: ${ADMIN_ALLOWED_CIDRS:-["127.0.0.1/32","172.16.0.0/12","192.168.0.0/16","10.0.0.0/8"]}
       AUTH_JWKS_URL: http://auth-service:8000/.well-known/jwks.json
       JWT_ISSUER: ${JWT_ISSUER:-cogo-auth}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-cogo-api}
@@ -401,6 +485,7 @@ services:
       chat-service: { condition: service_healthy }
       chat-ws: { condition: service_healthy }
       notification-service: { condition: service_healthy }
+      admin-service: { condition: service_healthy }
 
   # ---------------------------------------------------------------- observability (opt-in)
   # make obs-up   (and set OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 in .env for traces)
@@ -440,6 +525,12 @@ secrets:
     file: ./secrets/service-keys/chat-service.pem
   chat_ws_key:
     file: ./secrets/service-keys/chat-ws.pem
+  auth_service_key:
+    file: ./secrets/service-keys/auth-service.pem
+  notification_service_key:
+    file: ./secrets/service-keys/notification-service.pem
+  admin_service_key:
+    file: ./secrets/service-keys/admin-service.pem
 
 networks:
   backend:

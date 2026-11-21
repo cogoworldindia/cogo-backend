@@ -1,18 +1,22 @@
 #!/bin/bash
-# Runs once, on an empty data volume. Database-per-service with a dedicated login role per
-# service: a compromised service can only reach its own database.
+# Database-per-service with a dedicated login role per service: a compromised service can only
+# reach its own database. Idempotent: Postgres runs it on an empty data volume, and the
+# one-shot `db-provision` container runs it on every `make up` (PGHOST=postgres), so a
+# service added later gets its database on an existing volume too.
 set -euo pipefail
 
 create_service_db() {
   local db="$1" role="$2" password="$3"
   psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
        -v db="$db" -v role="$role" -v password="$password" <<-'SQL'
-	CREATE ROLE :"role" LOGIN PASSWORD :'password';
-	CREATE DATABASE :"db" OWNER :"role";
+	SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'role', :'password')
+	  WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'role') \gexec
+	SELECT format('CREATE DATABASE %I OWNER %I', :'db', :'role')
+	  WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'db') \gexec
 	REVOKE ALL ON DATABASE :"db" FROM PUBLIC;
 	GRANT CONNECT, TEMPORARY ON DATABASE :"db" TO :"role";
 SQL
-  echo "created database $db owned by $role"
+  echo "database $db (owner $role) ready"
 }
 
 create_service_db "${AUTH_DB:-authdb}" "${AUTH_DB_USER:-auth_svc}" "${AUTH_DB_PASSWORD:?AUTH_DB_PASSWORD required}"
@@ -21,6 +25,7 @@ create_service_db "${JOURNEY_DB:-journeydb}" "${JOURNEY_DB_USER:-journey_svc}" "
 create_service_db "${SOCIAL_DB:-socialdb}" "${SOCIAL_DB_USER:-social_svc}" "${SOCIAL_DB_PASSWORD:?SOCIAL_DB_PASSWORD required}"
 create_service_db "${CHAT_DB:-chatdb}" "${CHAT_DB_USER:-chat_svc}" "${CHAT_DB_PASSWORD:?CHAT_DB_PASSWORD required}"
 create_service_db "${NOTIFICATION_DB:-notificationdb}" "${NOTIFICATION_DB_USER:-notification_svc}" "${NOTIFICATION_DB_PASSWORD:?NOTIFICATION_DB_PASSWORD required}"
+create_service_db "${ADMIN_DB:-admindb}" "${ADMIN_DB_USER:-admin_svc}" "${ADMIN_DB_PASSWORD:?ADMIN_DB_PASSWORD required}"
 
 # PostGIS is not a trusted extension, so the superuser installs it for the services that
 # need spatial queries (journey matching and filters).

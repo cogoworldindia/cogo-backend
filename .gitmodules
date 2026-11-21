@@ -26,3 +26,7 @@
 	path = services/chat
 	url = git@github.com:cogoworldindia/chat-service.git
 	branch = feature/phase1
+[submodule "services/admin"]
+	path = services/admin
+	url = git@github.com:cogoworldindia/admin-service.git
+	branch = feature/phase1

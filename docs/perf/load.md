@@ -29,7 +29,7 @@ target needs.
 | Journey creation with matching (`make load-journeys`) | 500 journeys/min for 3 min | banner filled p95 < 10 s | **p95 545 ms** from the POST to `matches.state = done`; create p95 30 ms; 1,500 of 1,500 filled |
 | Sockets and chat (`make load-ws`) | 1,000 sockets, 50 messages/s for 2 min | delivery p95 < 500 ms | **p95 15 ms** socket to socket; 1,000 of 1,000 sockets, 0 errors; 30,051 deliveries for 6,000 messages (each user on 5 sockets) |
 | Sockets, larger (`SOCKETS=3000`) | 3,000 sockets, 50 messages/s for 1 min | as above | **p95 16 ms**; 3,000 of 3,000, 0 errors |
-| Soak (`make load-soak`) | every flow at once for 1 h (feed 30/s, 60 journeys/min, 300 sockets, 10 messages/s) | DLQs empty | see below |
+| Soak (`make load-soak`) | every flow at once for 1 h (feed 30/s, 60 journeys/min, 300 sockets, 10 messages/s) | DLQs empty | **DLQs empty**; latency targets met; 0.09% errors, all within one minute of host memory stall (below) |
 
 10k sockets (§12) is left to staging. Each k6 virtual user costs memory: at 3,000 sockets k6
 used 1.2 GB, so 10k would need about 4 GB on top of the stack. Run it on a separate load
@@ -97,7 +97,30 @@ and the push path were soaked; the sockets weren't.
 - New threshold: with every user on a socket, `messages_received` must reach 95% of the
   messages sent. It would have failed this run, and it guards `make load-ws` as well.
 
-**Second run:** see the results table once it finishes.
+**Second run (08:18–09:19 UTC):** the sockets stayed up the whole hour.
+- 48,591 messages delivered, against a floor of 34,200.
+- Latency held: feed p95 32 ms, banner p95 564 ms, delivery p95 27 ms.
+- All 7 DLQs were empty afterwards (`make dlq`).
+- **But** 175 of 185,499 requests failed (0.09%) and 36 sockets errored. That fails the
+  socket-error threshold (fewer than 3).
+
+Every one of those failures falls in one minute, 08:48:15–08:49:06, and the whole machine
+stalled then: swap was 98% full (8.0 of 8.2 GB), on a laptop also running other work.
+- chat-ws's presence writes to Redis timed out from 08:47:51 (793 warnings; the sockets
+  survived them, as the M8 fix intends).
+- Postgres logged clients dropping their connections at 08:49:00–04.
+- The sockets that missed their keepalive pings were closed (1011).
+
+The services needed no intervention: no restarts, no dead letters, normal latencies again
+straight after.
+
+k6 contributed to the memory pressure: it tagged every request with its full URL, so each
+feed cursor and conversation was its own time series (200,019 by the end). The scripts now
+give those requests one metric name each.
+
+**Verdict for M8:** the DLQ criterion holds after a real 1-hour soak. Zero errors under a
+1-hour soak on this laptop isn't shown; that belongs on staging, or on a machine with the
+headroom.
 
 ## Running it
 

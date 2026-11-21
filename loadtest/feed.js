@@ -30,11 +30,11 @@ export const options = {
 export default function () {
   const user = users[Math.floor(Math.random() * users.length)];
   const headers = { Authorization: `Bearer ${user.token}` };
-  const first = http.get(`${BASE}/v1/feed`, { headers, tags: { page: "first" } });
+  const first = http.get(`${BASE}/v1/feed`, { headers, tags: { page: "first", name: "GET /v1/feed" } });
   check(first, { "feed 200": (r) => r.status === 200 });
   const next = first.status === 200 ? first.json("data.next_cursor") : null;
   if (next && Math.random() < 0.3) {  // a third of users scroll on
-    const second = http.get(`${BASE}/v1/feed?cursor=${encodeURIComponent(next)}`, { headers, tags: { page: "next" } });
+    const second = http.get(`${BASE}/v1/feed?cursor=${encodeURIComponent(next)}`, { headers, tags: { page: "next", name: "GET /v1/feed?cursor" } });
     check(second, { "page 2 200": (r) => r.status === 200 });
   }
 }

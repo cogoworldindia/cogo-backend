@@ -84,7 +84,9 @@ export function send() {
   const r = http.post(
     `${BASE}/v1/conversations/${pair.conversation}/messages`,
     JSON.stringify({ client_msg_id: `${__VU}-${__ITER}-${Date.now()}`, body: `t:${Date.now()}` }),
-    { headers: { Authorization: `Bearer ${fromA ? pair.a_token : pair.b_token}`, "Content-Type": "application/json" } },
+    // one metric name for every conversation: per-URL tags made k6 track 200k time series
+    { headers: { Authorization: `Bearer ${fromA ? pair.a_token : pair.b_token}`, "Content-Type": "application/json" },
+      tags: { name: "POST /v1/conversations/{id}/messages" } },
   );
   check(r, { "sent 201": (x) => x.status === 201 || x.status === 200 });
 }
